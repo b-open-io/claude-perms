@@ -142,9 +142,23 @@ func (m Model) visiblePermissions() []types.PermissionStats {
 
 // selectedPermission returns the currently selected permission
 func (m Model) selectedPermission() *types.PermissionStats {
-	perms := m.visiblePermissions()
-	if m.cursor >= 0 && m.cursor < len(perms) {
-		return &perms[m.cursor]
+	if len(m.permissionGroups) == 0 {
+		return nil
+	}
+	if m.groupCursor >= len(m.permissionGroups) {
+		return nil
+	}
+
+	group := &m.permissionGroups[m.groupCursor]
+
+	if m.childCursor >= 0 && m.childCursor < len(group.Children) {
+		// Return specific child
+		return &group.Children[m.childCursor]
+	}
+
+	// Return first child of group (or nil if no children)
+	if len(group.Children) > 0 {
+		return &group.Children[0]
 	}
 	return nil
 }
