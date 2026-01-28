@@ -78,3 +78,13 @@ type SkillFrontmatter struct {
 	Description  string   `yaml:"description"`
 	AllowedTools []string `yaml:"allowedTools"`
 }
+
+// PermissionGroup represents a permission type with its children
+type PermissionGroup struct {
+	Type       string            // "Bash", "Read", etc.
+	TotalCount int               // Sum of all children counts
+	LastSeen   time.Time         // Most recent across all children
+	Children   []PermissionStats // Individual permissions like Bash(curl:*)
+	Expanded   bool              // UI state: is this group expanded?
+	ApprovedAt ApprovalLevel     // Highest approval level among children
+}

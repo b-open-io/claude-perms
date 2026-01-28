@@ -40,6 +40,11 @@ type Model struct {
 	// Filtered list
 	filteredIndices []int
 
+	// Hierarchical view
+	permissionGroups []types.PermissionGroup
+	groupCursor      int // Which group is selected
+	childCursor      int // Which child within expanded group (-1 if on group)
+
 	// Dimensions
 	width  int
 	height int
