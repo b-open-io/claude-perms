@@ -21,6 +21,7 @@ func NewModel() Model {
 	return Model{
 		activeView:       ViewFrequency,
 		showApplyModal:   false,
+		isLoading:        true,
 		permissions:      nil,
 		permissionGroups: nil,
 		agents:           nil,

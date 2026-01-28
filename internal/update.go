@@ -37,6 +37,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dataLoadedMsg:
 		log.Printf("dataLoadedMsg: err=%v, perms=%d, groups=%d, agents=%d, skills=%d",
 			msg.err, len(msg.permissions), len(msg.permissionGroups), len(msg.agents), len(msg.skills))
+		m.isLoading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil

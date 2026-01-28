@@ -19,6 +19,7 @@ type Model struct {
 	// View state
 	activeView     ViewType
 	showApplyModal bool
+	isLoading      bool // Shows loading indicator during initial data scan
 
 	// Data
 	permissions []types.PermissionStats

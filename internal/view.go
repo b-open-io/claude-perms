@@ -9,6 +9,10 @@ import (
 
 // View implements tea.Model
 func (m Model) View() string {
+	if m.isLoading {
+		return m.renderLoadingScreen()
+	}
+
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\n\nPress q to quit.", m.err)
 	}
@@ -185,4 +189,16 @@ func padRight(s string, width int) string {
 		return s
 	}
 	return s + strings.Repeat(" ", width-len(s))
+}
+
+// renderLoadingScreen renders a centered loading indicator
+func (m Model) renderLoadingScreen() string {
+	loading := lipgloss.NewStyle().
+		Foreground(ColorPrimary).
+		Bold(true).
+		Render("Loading permissions...")
+
+	return lipgloss.Place(m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		loading)
 }
