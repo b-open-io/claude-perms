@@ -19,21 +19,24 @@ func NewModel() Model {
 	cwd, _ := os.Getwd()
 
 	return Model{
-		activeView:      ViewFrequency,
-		showApplyModal:  false,
-		permissions:     nil,
-		agents:          nil,
-		skills:          nil,
-		userApproved:    nil,
-		projectApproved: nil,
-		projectPath:     cwd,
-		cursor:          0,
-		filterInput:     ti,
-		filtering:       false,
-		filteredIndices: nil,
-		width:           80,
-		height:          24,
-		err:             nil,
+		activeView:       ViewFrequency,
+		showApplyModal:   false,
+		permissions:      nil,
+		permissionGroups: nil,
+		agents:           nil,
+		skills:           nil,
+		userApproved:     nil,
+		projectApproved:  nil,
+		projectPath:      cwd,
+		cursor:           0,
+		groupCursor:      0,
+		childCursor:      -1, // Start on group, not child
+		filterInput:      ti,
+		filtering:        false,
+		filteredIndices:  nil,
+		width:            80,
+		height:           24,
+		err:              nil,
 	}
 }
 
@@ -157,5 +160,61 @@ func (m *Model) clampCursor() {
 	}
 	if m.cursor < 0 {
 		m.cursor = 0
+	}
+}
+
+func (m *Model) navigateDown() {
+	if len(m.permissionGroups) == 0 {
+		return
+	}
+
+	group := &m.permissionGroups[m.groupCursor]
+
+	if m.childCursor == -1 {
+		// On group header
+		if group.Expanded && len(group.Children) > 0 {
+			// Move into children
+			m.childCursor = 0
+		} else {
+			// Move to next group
+			if m.groupCursor < len(m.permissionGroups)-1 {
+				m.groupCursor++
+			}
+		}
+	} else {
+		// In children
+		if m.childCursor < len(group.Children)-1 {
+			m.childCursor++
+		} else {
+			// Move to next group
+			if m.groupCursor < len(m.permissionGroups)-1 {
+				m.groupCursor++
+				m.childCursor = -1
+			}
+		}
+	}
+}
+
+func (m *Model) navigateUp() {
+	if len(m.permissionGroups) == 0 {
+		return
+	}
+
+	if m.childCursor == -1 {
+		// On group header
+		if m.groupCursor > 0 {
+			m.groupCursor--
+			prevGroup := &m.permissionGroups[m.groupCursor]
+			if prevGroup.Expanded && len(prevGroup.Children) > 0 {
+				m.childCursor = len(prevGroup.Children) - 1
+			}
+		}
+	} else {
+		// In children
+		if m.childCursor > 0 {
+			m.childCursor--
+		} else {
+			m.childCursor = -1 // Back to group header
+		}
 	}
 }

@@ -27,13 +27,11 @@ func (m Model) handleKeyboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "j", "down":
-		m.cursor++
-		m.clampCursor()
+		m.navigateDown()
 		return m, nil
 
 	case "k", "up":
-		m.cursor--
-		m.clampCursor()
+		m.navigateUp()
 		return m, nil
 
 	case "g", "home":
@@ -48,8 +46,13 @@ func (m Model) handleKeyboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "enter":
-		if m.selectedPermission() != nil {
+	case "enter", " ":
+		// If on a group, toggle expand
+		if m.childCursor == -1 && m.groupCursor < len(m.permissionGroups) {
+			m.permissionGroups[m.groupCursor].Expanded = !m.permissionGroups[m.groupCursor].Expanded
+		}
+		// If on a child, show modal
+		if m.childCursor >= 0 {
 			m.showApplyModal = true
 		}
 		return m, nil

@@ -11,26 +11,44 @@ import (
 // renderFrequencyView renders the permission frequency list
 func (m Model) renderFrequencyView() string {
 	_, contentHeight := m.calculateLayout()
-	perms := m.visiblePermissions()
 
 	var lines []string
 
-	// Header row
-	header := renderFrequencyHeader()
-	lines = append(lines, header)
-
-	// Separator
+	// Header
+	lines = append(lines, renderFrequencyHeader())
 	lines = append(lines, styles.ListHeader.Render(strings.Repeat("─", m.width-4)))
 
-	// Permission rows
-	for i, p := range perms {
-		if i >= contentHeight-2 { // Account for header and separator
+	// Track current line for cursor
+	lineIndex := 0
+
+	for gi, group := range m.permissionGroups {
+		if len(lines) >= contentHeight {
 			break
 		}
 
-		selected := i == m.cursor
-		line := renderFrequencyRow(p, selected, m.width)
-		lines = append(lines, line)
+		// Render group header
+		isGroupSelected := gi == m.groupCursor && m.childCursor == -1
+		expandChar := "▶"
+		if group.Expanded {
+			expandChar = "▼"
+		}
+
+		groupLine := renderGroupRow(group, expandChar, isGroupSelected, m.width)
+		lines = append(lines, groupLine)
+		lineIndex++
+
+		// Render children if expanded
+		if group.Expanded {
+			for ci, child := range group.Children {
+				if len(lines) >= contentHeight {
+					break
+				}
+				isChildSelected := gi == m.groupCursor && ci == m.childCursor
+				childLine := renderChildRow(child, isChildSelected, m.width)
+				lines = append(lines, childLine)
+				lineIndex++
+			}
+		}
 	}
 
 	// Pad remaining lines
@@ -82,6 +100,58 @@ func renderFrequencyRow(p types.PermissionStats, selected bool, width int) strin
 		return styles.ListItemSelected.Render("> " + row)
 	}
 
+	return styles.ListItem.Render(row)
+}
+
+func renderGroupRow(g types.PermissionGroup, expandChar string, selected bool, width int) string {
+	count := fmt.Sprintf("%d", g.TotalCount)
+	countStyled := styles.ColCount.Render(count)
+
+	name := fmt.Sprintf("%s %s", expandChar, g.Type)
+	if len(g.Children) > 1 {
+		name += fmt.Sprintf(" (%d variants)", len(g.Children))
+	}
+	nameStyled := styles.ColPerm.Render(truncateString(name, 35))
+
+	timeStyled := styles.ColTime.Render(formatRelativeTime(g.LastSeen))
+
+	var statusStyled string
+	if g.ApprovedAt > types.NotApproved {
+		statusStyled = styles.StatusApproved.Render(g.ApprovedAt.String())
+	} else {
+		statusStyled = styles.StatusPending.Render("○")
+	}
+
+	row := fmt.Sprintf("%s  %s  %s  %s", countStyled, nameStyled, timeStyled, statusStyled)
+
+	if selected {
+		return styles.ListItemSelected.Render("> " + row)
+	}
+	return styles.ListItem.Render(row)
+}
+
+func renderChildRow(p types.PermissionStats, selected bool, width int) string {
+	count := fmt.Sprintf("%d", p.Count)
+	countStyled := styles.ColCount.Render(count)
+
+	// Indent child with scope only
+	name := "    " + p.Permission.Raw
+	nameStyled := styles.ColPerm.Render(truncateString(name, 35))
+
+	timeStyled := styles.ColTime.Render(formatRelativeTime(p.LastSeen))
+
+	var statusStyled string
+	if p.ApprovedAt > types.NotApproved {
+		statusStyled = styles.StatusApproved.Render(p.ApprovedAt.String())
+	} else {
+		statusStyled = styles.StatusPending.Render("○")
+	}
+
+	row := fmt.Sprintf("%s  %s  %s  %s", countStyled, nameStyled, timeStyled, statusStyled)
+
+	if selected {
+		return styles.ListItemSelected.Render("> " + row)
+	}
 	return styles.ListItem.Render(row)
 }
 
