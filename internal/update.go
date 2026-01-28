@@ -35,19 +35,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case dataLoadedMsg:
-		log.Printf("dataLoadedMsg: err=%v, perms=%d, agents=%d, skills=%d",
-			msg.err, len(msg.permissions), len(msg.agents), len(msg.skills))
+		log.Printf("dataLoadedMsg: err=%v, perms=%d, groups=%d, agents=%d, skills=%d",
+			msg.err, len(msg.permissions), len(msg.permissionGroups), len(msg.agents), len(msg.skills))
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.permissions = msg.permissions
+		m.permissionGroups = msg.permissionGroups
 		m.agents = msg.agents
 		m.skills = msg.skills
 		m.userApproved = msg.userApproved
 		m.projectApproved = msg.projectApproved
 		m.clampCursor()
-		log.Printf("Model updated: %d permissions loaded", len(m.permissions))
+		log.Printf("Model updated: %d permissions, %d groups loaded", len(m.permissions), len(m.permissionGroups))
 		return m, nil
 
 	case tea.KeyMsg:

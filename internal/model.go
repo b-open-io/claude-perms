@@ -55,12 +55,13 @@ type loadDataMsg struct{}
 
 // dataLoadedMsg contains loaded data
 type dataLoadedMsg struct {
-	permissions     []types.PermissionStats
-	agents          []types.AgentPermissions
-	skills          []types.SkillPermissions
-	userApproved    []string
-	projectApproved []string
-	err             error
+	permissions      []types.PermissionStats
+	permissionGroups []types.PermissionGroup
+	agents           []types.AgentPermissions
+	skills           []types.SkillPermissions
+	userApproved     []string
+	projectApproved  []string
+	err              error
 }
 
 // LoadData loads all permission data from disk
@@ -84,17 +85,21 @@ func LoadData(projectPath string) dataLoadedMsg {
 		)
 	}
 
+	// Group permissions by type
+	groups := parser.GroupPermissions(permissions)
+
 	// Load agents and skills
 	agents, _ := parser.LoadAllAgents()
 	skills, _ := parser.LoadAllSkills()
 
 	return dataLoadedMsg{
-		permissions:     permissions,
-		agents:          agents,
-		skills:          skills,
-		userApproved:    userApproved,
-		projectApproved: projectApproved,
-		err:             nil,
+		permissions:      permissions,
+		permissionGroups: groups,
+		agents:           agents,
+		skills:           skills,
+		userApproved:     userApproved,
+		projectApproved:  projectApproved,
+		err:              nil,
 	}
 }
 
