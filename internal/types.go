@@ -19,7 +19,9 @@ type Model struct {
 	// View state
 	activeView     ViewType
 	showApplyModal bool
-	isLoading      bool // Shows loading indicator during initial data scan
+	isLoading      bool        // Shows loading indicator during initial data scan
+	loadingStatus  string      // Current item being loaded
+	progressChan   chan string // Channel for streaming progress updates
 
 	// Data
 	permissions []types.PermissionStats

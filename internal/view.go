@@ -191,14 +191,28 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
-// renderLoadingScreen renders a centered loading indicator
+// renderLoadingScreen renders a centered loading indicator with streaming status
 func (m Model) renderLoadingScreen() string {
-	loading := lipgloss.NewStyle().
+	titleStyle := lipgloss.NewStyle().
 		Foreground(ColorPrimary).
-		Bold(true).
-		Render("Loading permissions...")
+		Bold(true)
+
+	statusStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")). // Gray
+		Italic(true)
+
+	title := titleStyle.Render("Loading permissions...")
+
+	// Show current status if available
+	var content string
+	if m.loadingStatus != "" {
+		status := statusStyle.Render(m.loadingStatus)
+		content = title + "\n" + status
+	} else {
+		content = title
+	}
 
 	return lipgloss.Place(m.width, m.height,
 		lipgloss.Center, lipgloss.Center,
-		loading)
+		content)
 }

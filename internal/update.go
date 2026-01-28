@@ -29,10 +29,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case loadDataMsg:
-		log.Printf("loadDataMsg received, loading data...")
-		return m, func() tea.Msg {
-			return LoadData(m.projectPath)
+		log.Printf("loadDataMsg received, starting load with progress...")
+		// Create channels
+		progress := make(chan string, 100)
+		result := make(chan dataLoadedMsg, 1)
+		m.progressChan = progress
+
+		// Start loading in background goroutine
+		projectPath := m.projectPath
+		go func() {
+			msg := LoadData(projectPath, progress)
+			close(progress)
+			result <- msg
+		}()
+
+		// Return batch: progress reader + result waiter
+		return m, tea.Batch(
+			progressReader(progress),
+			func() tea.Msg {
+				return <-result
+			},
+		)
+
+	case loadingProgressMsg:
+		m.loadingStatus = msg.status
+		log.Printf("Loading: %s", msg.status)
+		if m.isLoading && m.progressChan != nil {
+			return m, progressReader(m.progressChan)
 		}
+		return m, nil
 
 	case dataLoadedMsg:
 		log.Printf("dataLoadedMsg: err=%v, perms=%d, groups=%d, agents=%d, skills=%d",

@@ -34,11 +34,21 @@ type SessionEntry struct {
 
 // LoadAllPermissionStats loads permission stats from all session logs
 func LoadAllPermissionStats() ([]types.PermissionStats, error) {
-	return LoadAllPermissionStatsFrom(filepath.Join(claudeDir(), "projects"))
+	return LoadAllPermissionStatsWithProgress(nil)
+}
+
+// LoadAllPermissionStatsWithProgress loads permission stats with progress updates
+func LoadAllPermissionStatsWithProgress(progress chan<- string) ([]types.PermissionStats, error) {
+	return LoadAllPermissionStatsFromWithProgress(filepath.Join(claudeDir(), "projects"), progress)
 }
 
 // LoadAllPermissionStatsFrom loads permission stats from a specific projects directory
 func LoadAllPermissionStatsFrom(projectsDir string) ([]types.PermissionStats, error) {
+	return LoadAllPermissionStatsFromWithProgress(projectsDir, nil)
+}
+
+// LoadAllPermissionStatsFromWithProgress loads permission stats with progress updates
+func LoadAllPermissionStatsFromWithProgress(projectsDir string, progress chan<- string) ([]types.PermissionStats, error) {
 	// Map to aggregate stats by permission
 	statsMap := make(map[string]*types.PermissionStats)
 	projectsMap := make(map[string]map[string]bool) // permission -> set of projects
@@ -60,6 +70,11 @@ func LoadAllPermissionStatsFrom(projectsDir string) ([]types.PermissionStats, er
 		projectPath := filepath.Join(projectsDir, entry.Name())
 		projectName := decodeProjectPath(entry.Name())
 
+		// Send progress update for project
+		if progress != nil {
+			progress <- projectName
+		}
+
 		// Read sessions index
 		indexPath := filepath.Join(projectPath, "sessions-index.json")
 		sessions, err := loadSessionsIndex(indexPath)
@@ -69,6 +84,11 @@ func LoadAllPermissionStatsFrom(projectsDir string) ([]types.PermissionStats, er
 
 		// Process each session
 		for _, session := range sessions {
+			// Send progress update for session
+			if progress != nil {
+				progress <- session.SessionID[:8] + "..." // Show truncated session ID
+			}
+
 			sessionPath := filepath.Join(projectPath, session.SessionID+".jsonl")
 
 			// Parse modified time

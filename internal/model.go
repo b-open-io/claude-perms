@@ -57,6 +57,11 @@ func loadDataCmd() tea.Msg {
 // loadDataMsg triggers data loading
 type loadDataMsg struct{}
 
+// loadingProgressMsg updates the loading status display
+type loadingProgressMsg struct {
+	status string
+}
+
 // dataLoadedMsg contains loaded data
 type dataLoadedMsg struct {
 	permissions      []types.PermissionStats
@@ -68,15 +73,18 @@ type dataLoadedMsg struct {
 	err              error
 }
 
-// LoadData loads all permission data from disk
-func LoadData(projectPath string) dataLoadedMsg {
-	// Load permission stats from session logs
-	permissions, err := parser.LoadAllPermissionStats()
+// LoadData loads all permission data from disk with progress updates
+func LoadData(projectPath string, progress chan<- string) dataLoadedMsg {
+	// Load permission stats from session logs with progress
+	permissions, err := parser.LoadAllPermissionStatsWithProgress(progress)
 	if err != nil {
 		return dataLoadedMsg{err: err}
 	}
 
 	// Load approved permissions
+	if progress != nil {
+		progress <- "Loading user settings..."
+	}
 	userApproved, _ := parser.LoadUserSettings()
 	projectApproved, _ := parser.LoadProjectSettings(projectPath)
 
@@ -90,10 +98,20 @@ func LoadData(projectPath string) dataLoadedMsg {
 	}
 
 	// Group permissions by type
+	if progress != nil {
+		progress <- "Grouping permissions..."
+	}
 	groups := parser.GroupPermissions(permissions)
 
 	// Load agents and skills
+	if progress != nil {
+		progress <- "Loading agents..."
+	}
 	agents, _ := parser.LoadAllAgents()
+
+	if progress != nil {
+		progress <- "Loading skills..."
+	}
 	skills, _ := parser.LoadAllSkills()
 
 	return dataLoadedMsg{
@@ -104,6 +122,17 @@ func LoadData(projectPath string) dataLoadedMsg {
 		userApproved:     userApproved,
 		projectApproved:  projectApproved,
 		err:              nil,
+	}
+}
+
+// progressReader returns a command that reads from the progress channel
+func progressReader(ch <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		status, ok := <-ch
+		if !ok {
+			return nil // Channel closed, ignore
+		}
+		return loadingProgressMsg{status: status}
 	}
 }
 
