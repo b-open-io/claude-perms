@@ -1,0 +1,8 @@
+{
+  "name": "claude-perms",
+  "version": "0.1.0",
+  "description": "Permission analytics TUI for analyzing Claude Code permission usage patterns",
+  "author": "b-open-io",
+  "homepage": "https://github.com/b-open-io/claude-perms",
+  "skills": ["skills/perms"]
+}
