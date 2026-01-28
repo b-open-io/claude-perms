@@ -160,8 +160,9 @@ type AssistantMessage struct {
 
 // ContentItem represents an item in the content array
 type ContentItem struct {
-	Type string `json:"type"`
-	Name string `json:"name"` // Tool name for tool_use
+	Type  string          `json:"type"`
+	Name  string          `json:"name"`  // Tool name for tool_use
+	Input json.RawMessage `json:"input"` // Captures raw input JSON
 }
 
 // parseSessionLog parses a JSONL session log and extracts tool_use events
@@ -208,7 +209,9 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 		// Extract tool names from content
 		for _, item := range msg.Content {
 			if item.Type == "tool_use" && item.Name != "" {
-				perm := ParsePermission(item.Name)
+				// Extract full permission with scope from input
+				permString := ExtractPermissionScope(item.Name, item.Input)
+				perm := ParsePermission(permString)
 				key := PermissionKey(perm)
 
 				counts[key]++

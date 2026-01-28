@@ -14,23 +14,28 @@ func TestLoadAllPermissionStatsFrom(t *testing.T) {
 		t.Fatal("Expected some permissions, got none")
 	}
 
-	// Check we found Bash (should be most common in test data)
-	var bashFound bool
+	// Check we found Bash permissions (now scoped as Bash(ls:*), Bash(pwd:*), etc.)
 	var bashCount int
+	var bashPermCount int
 	for _, s := range stats {
 		if s.Permission.Type == "Bash" {
-			bashFound = true
-			bashCount = s.Count
-			break
+			bashPermCount++
+			bashCount += s.Count
 		}
 	}
 
-	if !bashFound {
-		t.Error("Expected to find Bash permission")
+	if bashPermCount == 0 {
+		t.Error("Expected to find Bash permissions")
 	}
 
+	// Total Bash usage across all scoped permissions should be 4
 	if bashCount != 4 {
-		t.Errorf("Expected Bash count of 4, got %d", bashCount)
+		t.Errorf("Expected total Bash count of 4, got %d", bashCount)
+	}
+
+	// Should have 4 distinct scoped Bash permissions (ls, pwd, curl, jq)
+	if bashPermCount != 4 {
+		t.Errorf("Expected 4 scoped Bash permissions, got %d", bashPermCount)
 	}
 
 	// Check Read
