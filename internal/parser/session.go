@@ -86,7 +86,7 @@ func LoadAllPermissionStatsFromWithProgress(projectsDir string, progress chan<- 
 		for _, session := range sessions {
 			// Send progress update for session
 			if progress != nil {
-				progress <- session.SessionID[:8] + "..." // Show truncated session ID
+				progress <- session.SessionID[:12] + "..." // Show truncated session ID
 			}
 
 			sessionPath := filepath.Join(projectPath, session.SessionID+".jsonl")

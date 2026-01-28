@@ -201,7 +201,7 @@ func (m Model) renderLoadingScreen() string {
 		Foreground(lipgloss.Color("244")). // Gray
 		Italic(true)
 
-	title := titleStyle.Render("Loading permissions...")
+	title := titleStyle.Render("Loading Permission History...")
 
 	// Show current status if available
 	var content string
