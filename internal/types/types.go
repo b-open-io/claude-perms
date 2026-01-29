@@ -42,6 +42,7 @@ func (a ApprovalLevel) String() string {
 type AgentPermissions struct {
 	Name        string
 	Plugin      string // Plugin name if from a plugin, empty otherwise
+	Version     string // Plugin version (e.g., "1.0.20")
 	FilePath    string
 	Permissions []Permission
 }
@@ -50,8 +51,19 @@ type AgentPermissions struct {
 type SkillPermissions struct {
 	Name        string
 	Plugin      string
+	Version     string // Plugin version (e.g., "1.0.20")
 	FilePath    string
 	Permissions []Permission
+}
+
+// AgentUsageStats tracks actual permission usage by an agent type
+type AgentUsageStats struct {
+	AgentType   string            // "Explore", "bopen-tools:devops-specialist", etc.
+	Permissions []PermissionStats // Actual tool_uses from this agent
+	TotalCalls  int               // Sum of all permission counts
+	LastSeen    time.Time         // Most recent activity
+	Sessions    int               // Number of sessions this agent ran in
+	Projects    []string          // Projects where this agent was used
 }
 
 // Settings represents the settings.local.json structure
@@ -67,16 +79,16 @@ type PermissionSettings struct {
 
 // AgentFrontmatter represents the YAML frontmatter of an agent file
 type AgentFrontmatter struct {
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	AllowedTools []string `yaml:"allowedTools"`
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description"`
+	Tools       interface{} `yaml:"tools"` // Can be []string or comma-separated string
 }
 
 // SkillFrontmatter represents the YAML frontmatter of a skill file
 type SkillFrontmatter struct {
-	Name         string   `yaml:"name"`
-	Description  string   `yaml:"description"`
-	AllowedTools []string `yaml:"allowedTools"`
+	Name        string      `yaml:"name"`
+	Description string      `yaml:"description"`
+	Tools       interface{} `yaml:"tools"` // Can be []string or comma-separated string
 }
 
 // PermissionGroup represents a permission type with its children
