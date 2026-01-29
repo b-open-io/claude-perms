@@ -91,9 +91,13 @@ func (m Model) handleKeyboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.showApplyModal = true
 			}
 		case ViewMatrix:
-			if len(m.agents) > 0 && m.matrixCursor < len(m.agents) {
+			if len(m.agentUsage) > 0 && m.matrixCursor < len(m.agentUsage) {
 				m.selectedAgentIdx = m.matrixCursor
 				m.showAgentModal = true
+				// Initialize selection state
+				m.agentModalSelected = make([]bool, len(m.agentUsage[m.matrixCursor].Permissions))
+				m.agentModalCursor = 0
+				m.agentModalMode = AgentModalModePermissions
 			}
 		}
 		return m, nil

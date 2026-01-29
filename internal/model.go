@@ -277,20 +277,22 @@ func (m *Model) resetApplyModalState() {
 
 // navigateMatrixDown moves cursor down in Matrix view
 func (m *Model) navigateMatrixDown() {
-	maxIdx := len(m.agents) - 1
+	maxIdx := len(m.agentUsage) - 1
+	if maxIdx < 0 {
+		maxIdx = len(m.agents) - 1
+	}
 	if maxIdx < 0 {
 		return
 	}
+
 	if m.matrixCursor < maxIdx {
 		m.matrixCursor++
-		// Update scroll to keep cursor visible
+
+		// Scroll if needed
 		_, contentHeight := m.calculateLayout()
-		viewportHeight := contentHeight - 4
-		if viewportHeight < 1 {
-			viewportHeight = 1
-		}
+		viewportHeight := contentHeight - 5
 		if m.matrixCursor >= m.matrixScroll+viewportHeight {
-			m.matrixScroll = m.matrixCursor - viewportHeight + 1
+			m.matrixScroll++
 		}
 	}
 }
@@ -299,7 +301,8 @@ func (m *Model) navigateMatrixDown() {
 func (m *Model) navigateMatrixUp() {
 	if m.matrixCursor > 0 {
 		m.matrixCursor--
-		// Update scroll to keep cursor visible
+
+		// Scroll if needed
 		if m.matrixCursor < m.matrixScroll {
 			m.matrixScroll = m.matrixCursor
 		}

@@ -40,9 +40,13 @@ func (m Model) View() string {
 	// Status bar
 	b.WriteString(m.renderStatusBar())
 
-	// Modal overlay
+	// Modal overlays
 	if m.showApplyModal {
 		return m.renderWithModal(b.String())
+	}
+
+	if m.showAgentModal {
+		return m.renderWithAgentModal(b.String())
 	}
 
 	return b.String()
@@ -87,15 +91,28 @@ func (m Model) renderStatusBar() string {
 	if m.filtering {
 		left = "Filter: " + m.filterInput.View()
 	} else {
-		perms := m.visiblePermissions()
-		if len(perms) > 0 {
-			left = fmt.Sprintf("%d/%d permissions", m.cursor+1, len(perms))
-		} else {
-			left = "No permissions found"
+		switch m.activeView {
+		case ViewFrequency:
+			perms := m.visiblePermissions()
+			if len(perms) > 0 {
+				left = fmt.Sprintf("%d/%d permissions", m.cursor+1, len(perms))
+			} else {
+				left = "No permissions found"
+			}
+		case ViewMatrix:
+			if len(m.agentUsage) > 0 {
+				left = fmt.Sprintf("%d/%d agents", m.matrixCursor+1, len(m.agentUsage))
+			} else if len(m.agents) > 0 {
+				left = fmt.Sprintf("%d/%d agents", m.matrixCursor+1, len(m.agents))
+			} else {
+				left = "No agents found"
+			}
+		case ViewHelp:
+			left = "Help"
 		}
 	}
 
-	right = "j/k: nav  Enter: apply  Tab: view  /: filter  q: quit"
+	right = "j/k: nav  Enter: details  Tab: view  /: filter  q: quit"
 
 	// Calculate spacing
 	spacing := m.width - len(left) - len(right) - 2
@@ -191,6 +208,14 @@ func padRight(s string, width int) string {
 	return s + strings.Repeat(" ", width-len(s))
 }
 
+// padLeft pads a string on the left to the specified width
+func padLeft(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-len(s)) + s
+}
+
 // renderLoadingScreen renders a centered loading indicator with streaming status
 func (m Model) renderLoadingScreen() string {
 	titleStyle := lipgloss.NewStyle().
@@ -201,15 +226,22 @@ func (m Model) renderLoadingScreen() string {
 		Foreground(lipgloss.Color("244")). // Gray
 		Italic(true)
 
+	sessionStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240")). // Darker gray
+		Italic(true)
+
 	title := titleStyle.Render("Loading Permission History...")
 
-	// Show current status if available
+	// Build content with project path and session ID
 	var content string
+	content = title
+
 	if m.loadingStatus != "" {
-		status := statusStyle.Render(m.loadingStatus)
-		content = title + "\n" + status
-	} else {
-		content = title
+		content += "\n" + statusStyle.Render(m.loadingStatus)
+	}
+
+	if m.loadingSession != "" {
+		content += "\n" + sessionStyle.Render(m.loadingSession)
 	}
 
 	return lipgloss.Place(m.width, m.height,
