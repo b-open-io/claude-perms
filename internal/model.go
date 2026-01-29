@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/b-open-io/claude-perms/internal/parser"
 	"github.com/b-open-io/claude-perms/internal/types"
@@ -52,6 +54,37 @@ func (m Model) Init() tea.Cmd {
 // loadDataCmd loads all permission data
 func loadDataCmd() tea.Msg {
 	return loadDataMsg{}
+}
+
+// toastTickMsg is sent to count down the toast display timer
+type toastTickMsg struct{}
+
+// toastTickCmd returns a command that sends a toastTickMsg after a delay
+func toastTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return toastTickMsg{}
+	})
+}
+
+// setApplyToast sets the toast message from an apply result
+func (m *Model) setApplyToast(result *parser.ApplyResult) {
+	if !result.WasNew {
+		m.toastMessage = fmt.Sprintf("Already exists in %s", result.FilePath)
+		m.toastTicks = 3
+		return
+	}
+	if result.LineNumber > 0 {
+		m.toastMessage = fmt.Sprintf("Written to %s:%d", result.FilePath, result.LineNumber)
+	} else {
+		m.toastMessage = fmt.Sprintf("Written to %s", result.FilePath)
+	}
+	m.toastTicks = 4
+}
+
+// setApplyToastBatch sets a toast for batch apply
+func (m *Model) setApplyToastBatch(filePath string, count int) {
+	m.toastMessage = fmt.Sprintf("%d permissions written to %s", count, filePath)
+	m.toastTicks = 4
 }
 
 // loadDataMsg triggers data loading
@@ -116,10 +149,7 @@ func LoadData(projectPath string, progress chan<- string) dataLoadedMsg {
 	skills, _ := parser.LoadAllSkills()
 
 	// Load agent usage stats from session logs
-	if progress != nil {
-		progress <- "Loading agent usage stats..."
-	}
-	agentUsage, _ := parser.LoadAgentUsageStats()
+	agentUsage, _ := parser.LoadAgentUsageStats(progress)
 
 	return dataLoadedMsg{
 		permissions:      permissions,
@@ -220,28 +250,25 @@ func (m *Model) navigateDown() {
 	group := &m.permissionGroups[m.groupCursor]
 
 	if m.childCursor == -1 {
-		// On group header
 		if group.Expanded && len(group.Children) > 0 {
-			// Move into children
 			m.childCursor = 0
 		} else {
-			// Move to next group
 			if m.groupCursor < len(m.permissionGroups)-1 {
 				m.groupCursor++
 			}
 		}
 	} else {
-		// In children
 		if m.childCursor < len(group.Children)-1 {
 			m.childCursor++
 		} else {
-			// Move to next group
 			if m.groupCursor < len(m.permissionGroups)-1 {
 				m.groupCursor++
 				m.childCursor = -1
 			}
 		}
 	}
+
+	m.updateFreqScroll()
 }
 
 func (m *Model) navigateUp() {
@@ -250,7 +277,6 @@ func (m *Model) navigateUp() {
 	}
 
 	if m.childCursor == -1 {
-		// On group header
 		if m.groupCursor > 0 {
 			m.groupCursor--
 			prevGroup := &m.permissionGroups[m.groupCursor]
@@ -259,12 +285,33 @@ func (m *Model) navigateUp() {
 			}
 		}
 	} else {
-		// In children
 		if m.childCursor > 0 {
 			m.childCursor--
 		} else {
-			m.childCursor = -1 // Back to group header
+			m.childCursor = -1
 		}
+	}
+
+	m.updateFreqScroll()
+}
+
+// updateFreqScroll ensures the cursor is visible within the frequency viewport.
+func (m *Model) updateFreqScroll() {
+	_, contentHeight := m.calculateLayout()
+	viewportHeight := contentHeight - 2 // header + separator
+	if viewportHeight < 1 {
+		viewportHeight = 1
+	}
+
+	cursorLine := m.freqVisualLine()
+
+	// Scroll down if cursor is below viewport
+	if cursorLine >= m.freqScroll+viewportHeight {
+		m.freqScroll = cursorLine - viewportHeight + 1
+	}
+	// Scroll up if cursor is above viewport
+	if cursorLine < m.freqScroll {
+		m.freqScroll = cursorLine
 	}
 }
 
@@ -277,10 +324,7 @@ func (m *Model) resetApplyModalState() {
 
 // navigateMatrixDown moves cursor down in Matrix view
 func (m *Model) navigateMatrixDown() {
-	maxIdx := len(m.agentUsage) - 1
-	if maxIdx < 0 {
-		maxIdx = len(m.agents) - 1
-	}
+	maxIdx := m.matrixListLen() - 1
 	if maxIdx < 0 {
 		return
 	}
@@ -295,6 +339,14 @@ func (m *Model) navigateMatrixDown() {
 			m.matrixScroll++
 		}
 	}
+}
+
+// matrixListLen returns the length of the active matrix list
+func (m *Model) matrixListLen() int {
+	if len(m.agentUsage) > 0 {
+		return len(m.agentUsage)
+	}
+	return len(m.agents)
 }
 
 // navigateMatrixUp moves cursor up in Matrix view

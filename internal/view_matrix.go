@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/b-open-io/claude-perms/internal/parser"
 	"github.com/b-open-io/claude-perms/internal/types"
 )
 
@@ -15,28 +16,42 @@ const (
 )
 
 // calculateMatrixColumns returns responsive column widths based on terminal width
+// Uses weight-based sizing so columns scale proportionally to fill the terminal.
 // Returns: nameWidth, declWidth, callsWidth, lastWidth, statusWidth
 func (m Model) calculateMatrixColumns() (nameWidth, declWidth, callsWidth, lastWidth, statusWidth int) {
-	// Fixed column widths
-	declWidth = 6   // "Decl" column (right-aligned number)
-	callsWidth = 7  // "Calls" column (right-aligned number)
-	lastWidth = 10  // "Last" column (relative time like "2h ago")
-	statusWidth = 8 // "Status" column ("all", "3/5", or "-")
-
-	// Spacing between columns: 1 space each side = 5 total gaps between 5 columns
 	const cursorWidth = 2   // "> " or "  "
-	const columnSpacing = 5 // 1 space between each of the 5 columns
+	const columnGaps = 5    // 1 space between each of the 5 columns
+	const contentPad = 4    // Content area padding
 
-	// Calculate remaining space for name column
-	fixedWidth := cursorWidth + declWidth + callsWidth + lastWidth + statusWidth + columnSpacing
-	nameWidth = m.width - fixedWidth - 4 // -4 for padding
+	// Base column widths (minimums)
+	declWidth = 6   // "Decl"
+	callsWidth = 7  // "Calls"
+	lastWidth = 10  // "Last" (e.g. "just now", "2w ago")
+	statusWidth = 8 // "Status" (e.g. "all", "3/5")
 
-	// Clamp name width between min and max
+	fixedWidth := cursorWidth + declWidth + callsWidth + lastWidth + statusWidth + columnGaps + contentPad
+	nameWidth = m.width - fixedWidth
+
+	// On wide terminals (120+), distribute extra space to data columns too
+	extra := nameWidth - 45 // space beyond a comfortable agent name width
+	if extra > 0 {
+		// Give some extra breathing room to data columns
+		bonus := extra / 4
+		if bonus > 4 {
+			bonus = 4
+		}
+		declWidth += bonus
+		callsWidth += bonus
+		lastWidth += bonus
+		statusWidth += bonus
+		// Recalculate name from the new fixed total
+		fixedWidth = cursorWidth + declWidth + callsWidth + lastWidth + statusWidth + columnGaps + contentPad
+		nameWidth = m.width - fixedWidth
+	}
+
+	// Clamp name width to a sensible minimum
 	if nameWidth < 20 {
 		nameWidth = 20
-	}
-	if nameWidth > 50 {
-		nameWidth = 50
 	}
 
 	return nameWidth, declWidth, callsWidth, lastWidth, statusWidth
@@ -54,6 +69,7 @@ func (m Model) renderMatrixColumnHeader() string {
 	status := padLeft("Status", statusWidth)
 
 	header := fmt.Sprintf("  %s %s %s %s %s", agent, decl, calls, last, status)
+	header = padRight(header, m.width-4)
 	return styles.ListHeader.Render(header)
 }
 
@@ -76,18 +92,25 @@ func (m Model) getDeclaredPermCount(agentType string) int {
 func (m Model) countApprovedPerms(perms []types.PermissionStats) int {
 	count := 0
 	for _, p := range perms {
-		// Check if permission is in user or project approved lists
-		for _, approved := range m.userApproved {
-			if approved == p.Permission.Raw {
-				count++
+		approved := false
+		// Check if permission is in user approved list
+		for _, a := range m.userApproved {
+			if a == p.Permission.Raw {
+				approved = true
 				break
 			}
 		}
-		for _, approved := range m.projectApproved {
-			if approved == p.Permission.Raw {
-				count++
-				break
+		// Only check project approved if not already found
+		if !approved {
+			for _, a := range m.projectApproved {
+				if a == p.Permission.Raw {
+					approved = true
+					break
+				}
 			}
+		}
+		if approved {
+			count++
 		}
 	}
 	return count
@@ -134,10 +157,15 @@ func (m Model) renderAgentUsageRow(agent types.AgentUsageStats, selected bool) s
 
 	row := fmt.Sprintf("%s%s %s %s %s %s", cursor, name, decl, calls, last, status)
 
+	// Pad row to fill terminal width for full-width highlight
+	maxWidth := m.width - 2
+	row = truncateString(row, maxWidth)
+	row = padRight(row, maxWidth)
+
 	if selected {
-		return styles.ListItemSelected.Render(truncateString(row, m.width-2))
+		return styles.ListItemSelected.Render(row)
 	}
-	return truncateString(row, m.width-2)
+	return row
 }
 
 // renderMatrixView renders the agent/skill permission matrix with responsive columns
@@ -152,9 +180,9 @@ func (m Model) renderMatrixView() string {
 		agentCount = len(m.agents)
 	}
 	skillCount := len(m.skills)
-	header := truncateString(fmt.Sprintf("Agents: %d | Skills: %d", agentCount, skillCount), m.width-4)
-	lines = append(lines, header)
-	lines = append(lines, strings.Repeat("-", m.width-4))
+	headerText := fmt.Sprintf("Agents: %d | Skills: %d", agentCount, skillCount)
+	lines = append(lines, padRight(truncateString(headerText, m.width-4), m.width-4))
+	lines = append(lines, strings.Repeat("─", m.width-4))
 
 	// Column headers
 	lines = append(lines, m.renderMatrixColumnHeader())
@@ -227,11 +255,6 @@ func (m Model) renderMatrixView() string {
 	return strings.Join(lines[:contentHeight], "\n") + "\n"
 }
 
-// renderAgentRow renders a single agent row (must be single line, no wrapping)
-func renderAgentRow(agent types.AgentPermissions, width int) string {
-	return renderAgentRowWithCursor(agent, width, false)
-}
-
 // renderAgentRowWithCursor renders an agent row with optional cursor (fallback for declared agents)
 func renderAgentRowWithCursor(agent types.AgentPermissions, width int, selected bool) string {
 	var name string
@@ -259,32 +282,14 @@ func renderAgentRowWithCursor(agent types.AgentPermissions, width int, selected 
 	// Format: cursor + name (left-aligned, fixed width) + perm count (right-aligned)
 	line := fmt.Sprintf("%s%s %s", cursor, padRight(displayName, nameCol), padLeft(permCount, permCol))
 
+	maxWidth := width - 2
+	line = truncateString(line, maxWidth)
+	line = padRight(line, maxWidth)
+
 	if selected {
-		return styles.ListItemSelected.Render(truncateString(line, width-2))
+		return styles.ListItemSelected.Render(line)
 	}
-	return truncateString(line, width-2)
-}
-
-// renderSkillRow renders a single skill row (must be single line, no wrapping)
-func renderSkillRow(skill types.SkillPermissions, width int) string {
-	var name string
-	if skill.Plugin != "" {
-		name = fmt.Sprintf("%s:%s", skill.Plugin, skill.Name)
-	} else {
-		name = skill.Name
-	}
-
-	permCount := fmt.Sprintf("(%d perms)", len(skill.Permissions))
-
-	// Calculate available width
-	maxNameWidth := width - 4 - len(permCount) - 2
-	if maxNameWidth < 10 {
-		maxNameWidth = 10
-	}
-	name = truncateString(name, maxNameWidth)
-
-	line := fmt.Sprintf("    %s  %s", padRight(name, maxNameWidth), permCount)
-	return truncateString(line, width-2)
+	return line
 }
 
 // renderAgentDetailModal renders the agent detail modal with multi-select
@@ -295,9 +300,9 @@ func (m Model) renderAgentDetailModal() string {
 
 	agent := m.agentUsage[m.selectedAgentIdx]
 
-	modalWidth := m.width * 80 / 100
-	if modalWidth > 70 {
-		modalWidth = 70
+	modalWidth := m.width * 85 / 100
+	if modalWidth > 80 {
+		modalWidth = 80
 	}
 	if modalWidth < 50 {
 		modalWidth = 50
@@ -371,16 +376,22 @@ func (m Model) renderPermissionSelectMode(agent types.AgentUsageStats) string {
 
 // renderScopeSelectMode renders the user/project scope selection
 func (m Model) renderScopeSelectMode() string {
+	if m.selectedAgentIdx >= len(m.agentUsage) {
+		return ""
+	}
+	agent := m.agentUsage[m.selectedAgentIdx]
+
 	var content strings.Builder
 
-	selectedCount := 0
-	for _, sel := range m.agentModalSelected {
-		if sel {
-			selectedCount++
+	// Collect selected permission strings
+	var selectedPerms []string
+	for i, perm := range agent.Permissions {
+		if i < len(m.agentModalSelected) && m.agentModalSelected[i] {
+			selectedPerms = append(selectedPerms, perm.Permission.Raw)
 		}
 	}
 
-	content.WriteString(fmt.Sprintf("  Apply %d permissions to:\n\n", selectedCount))
+	content.WriteString(fmt.Sprintf("  Apply %d permissions to:\n\n", len(selectedPerms)))
 
 	userCursor := "  "
 	projCursor := "  "
@@ -407,6 +418,13 @@ func (m Model) renderScopeSelectMode() string {
 	}
 	content.WriteString("\n")
 
+	// Diff preview for current scope selection
+	if m.agentModalScope == 0 && len(selectedPerms) > 0 {
+		content.WriteString("\n")
+		filePath, diffLines, allExist := parser.PreviewUserDiff(selectedPerms)
+		content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+	}
+
 	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",
 		styles.HelpKey.Render("Enter"),
 		styles.HelpKey.Render("j/k"),
@@ -418,6 +436,14 @@ func (m Model) renderScopeSelectMode() string {
 // renderProjectSelectMode renders the project selection list
 func (m Model) renderProjectSelectMode(agent types.AgentUsageStats) string {
 	var content strings.Builder
+
+	// Collect selected permission strings
+	var selectedPerms []string
+	for i, perm := range agent.Permissions {
+		if i < len(m.agentModalSelected) && m.agentModalSelected[i] {
+			selectedPerms = append(selectedPerms, perm.Permission.Raw)
+		}
+	}
 
 	content.WriteString("  Select project:\n\n")
 
@@ -435,6 +461,14 @@ func (m Model) renderProjectSelectMode(agent types.AgentUsageStats) string {
 			content.WriteString(line)
 		}
 		content.WriteString("\n")
+	}
+
+	// Diff preview for the selected project
+	if m.agentModalProjCursor < len(agent.Projects) && len(selectedPerms) > 0 {
+		content.WriteString("\n")
+		projectPath := agent.Projects[m.agentModalProjCursor]
+		filePath, diffLines, allExist := parser.PreviewProjectDiff(projectPath, selectedPerms)
+		content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
 	}
 
 	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",
@@ -461,7 +495,7 @@ func (m Model) getPermissionApprovalStatus(permRaw string) string {
 }
 
 // renderWithAgentModal overlays the agent detail modal
-func (m Model) renderWithAgentModal(background string) string {
+func (m Model) renderWithAgentModal(_ string) string {
 	modal := m.renderAgentDetailModal()
 
 	modalLines := strings.Split(modal, "\n")

@@ -29,12 +29,12 @@ type TaskInput struct {
 }
 
 // LoadAgentUsageStats loads permission usage stats grouped by agent type
-func LoadAgentUsageStats() ([]types.AgentUsageStats, error) {
-	return LoadAgentUsageStatsFrom(filepath.Join(claudeDir(), "projects"))
+func LoadAgentUsageStats(progress chan<- string) ([]types.AgentUsageStats, error) {
+	return LoadAgentUsageStatsFrom(filepath.Join(claudeDir(), "projects"), progress)
 }
 
 // LoadAgentUsageStatsFrom loads agent usage stats from a specific projects directory
-func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error) {
+func LoadAgentUsageStatsFrom(projectsDir string, progress chan<- string) ([]types.AgentUsageStats, error) {
 	// Walk project directories
 	entries, err := os.ReadDir(projectsDir)
 	if err != nil {
@@ -44,13 +44,15 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 		return nil, err
 	}
 
+	// Use the unified cache from cache.go
+	cache := loadCache()
+	cacheDirty := false
+
 	// Maps for aggregation
-	// slug -> agentType (from Task tool_use in parent sessions)
-	slugToAgentType := make(map[string]string)
-	// agentType -> stats data
+	agentIdToAgentType := make(map[string]string)
 	agentStats := make(map[string]*agentStatsBuilder)
 
-	// First pass: scan parent sessions to build slug->agentType mapping
+	// First pass: scan all non-agent session files to build agentId->agentType mapping
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -58,17 +60,46 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 
 		projectPath := filepath.Join(projectsDir, entry.Name())
 
-		// Read sessions index
-		indexPath := filepath.Join(projectPath, "sessions-index.json")
-		sessions, err := loadSessionsIndex(indexPath)
+		allFiles, err := filepath.Glob(filepath.Join(projectPath, "*.jsonl"))
 		if err != nil {
 			continue
 		}
 
-		// Scan each session for Task tool_uses with subagent_type
-		for _, session := range sessions {
-			sessionPath := filepath.Join(projectPath, session.SessionID+".jsonl")
-			extractSlugMappings(sessionPath, slugToAgentType)
+		projectName := decodeProjectPath(entry.Name())
+		if progress != nil {
+			progress <- projectName
+		}
+
+		for _, sessionFile := range allFiles {
+			baseName := filepath.Base(sessionFile)
+			if strings.HasPrefix(baseName, "agent-") {
+				continue
+			}
+
+			// Try cache first
+			if cached, hit := getCachedAgentMappings(cache, sessionFile); hit {
+				for k, v := range cached {
+					agentIdToAgentType[k] = v
+				}
+				continue
+			}
+
+			if progress != nil {
+				sessionID := strings.TrimSuffix(baseName, ".jsonl")
+				if len(sessionID) > 12 {
+					sessionID = sessionID[:12] + "..."
+				}
+				progress <- "session:" + sessionID
+			}
+
+			// Parse and cache
+			localMap := make(map[string]string)
+			extractAgentIdMappings(sessionFile, localMap)
+			for k, v := range localMap {
+				agentIdToAgentType[k] = v
+			}
+			setCachedAgentMappings(cache, sessionFile, localMap)
+			cacheDirty = true
 		}
 	}
 
@@ -81,34 +112,51 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 		projectPath := filepath.Join(projectsDir, entry.Name())
 		projectName := decodeProjectPath(entry.Name())
 
-		// Find agent-*.jsonl files
+		if progress != nil {
+			progress <- projectName
+		}
+
+		// Find agent-*.jsonl files at project root
 		agentFiles, err := filepath.Glob(filepath.Join(projectPath, "agent-*.jsonl"))
 		if err != nil {
 			continue
 		}
 
+		// Also find agent files in session subagent directories
+		subagentFiles, err := filepath.Glob(filepath.Join(projectPath, "*/subagents/agent-*.jsonl"))
+		if err == nil {
+			agentFiles = append(agentFiles, subagentFiles...)
+		}
+
 		for _, agentFile := range agentFiles {
-			// Parse agent session and get tool_uses
-			slug, perms, sessionTime := parseAgentSession(agentFile)
-			if slug == "" {
-				continue
+			baseName := filepath.Base(agentFile)
+			agentId := strings.TrimSuffix(strings.TrimPrefix(baseName, "agent-"), ".jsonl")
+
+			// Try cache first
+			var perms []types.PermissionStats
+			var sessionTime time.Time
+
+			if cachedPerms, cachedTime, hit := getCachedAgentSession(cache, agentFile); hit {
+				perms = cachedPerms
+				sessionTime = cachedTime
+			} else {
+				perms, sessionTime = parseAgentSession(agentFile)
+				setCachedAgentSession(cache, agentFile, perms, sessionTime)
+				cacheDirty = true
 			}
 
-			// Look up agent type from slug
-			agentType, ok := slugToAgentType[slug]
+			agentType, ok := agentIdToAgentType[agentId]
 			if !ok {
-				// If we can't find the mapping, use slug as the type
 				agentType = "Unknown"
 			}
 
-			// Initialize stats builder if needed
 			if _, exists := agentStats[agentType]; !exists {
 				agentStats[agentType] = &agentStatsBuilder{
-					agentType:    agentType,
-					permissions:  make(map[string]*types.PermissionStats),
-					sessions:     make(map[string]bool),
-					projects:     make(map[string]bool),
-					lastSeen:     time.Time{},
+					agentType:   agentType,
+					permissions: make(map[string]*types.PermissionStats),
+					sessions:    make(map[string]bool),
+					projects:    make(map[string]bool),
+					lastSeen:    time.Time{},
 				}
 			}
 
@@ -116,7 +164,6 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 			builder.sessions[agentFile] = true
 			builder.projects[projectName] = true
 
-			// Aggregate permissions
 			for _, p := range perms {
 				key := PermissionKey(p.Permission)
 				if _, exists := builder.permissions[key]; !exists {
@@ -138,10 +185,14 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 		}
 	}
 
+	// Save unified cache if anything changed
+	if cacheDirty {
+		_ = saveCache(cache)
+	}
+
 	// Convert to output slice
 	result := make([]types.AgentUsageStats, 0, len(agentStats))
 	for agentType, builder := range agentStats {
-		// Convert permissions map to slice
 		perms := make([]types.PermissionStats, 0, len(builder.permissions))
 		totalCalls := 0
 		for _, p := range builder.permissions {
@@ -149,12 +200,10 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 			totalCalls += p.Count
 		}
 
-		// Sort permissions by count descending
 		sort.Slice(perms, func(i, j int) bool {
 			return perms[i].Count > perms[j].Count
 		})
 
-		// Convert projects map to slice
 		projects := make([]string, 0, len(builder.projects))
 		for proj := range builder.projects {
 			projects = append(projects, proj)
@@ -171,7 +220,6 @@ func LoadAgentUsageStatsFrom(projectsDir string) ([]types.AgentUsageStats, error
 		})
 	}
 
-	// Sort by TotalCalls descending
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].TotalCalls > result[j].TotalCalls
 	})
@@ -188,8 +236,8 @@ type agentStatsBuilder struct {
 	lastSeen    time.Time
 }
 
-// extractSlugMappings scans a session file for Task tool_uses and extracts slug->agentType mappings
-func extractSlugMappings(sessionPath string, slugToAgentType map[string]string) {
+// extractAgentIdMappings scans a session file for Task tool_uses and extracts agentId->agentType mappings
+func extractAgentIdMappings(sessionPath string, agentIdToAgentType map[string]string) {
 	file, err := os.Open(sessionPath)
 	if err != nil {
 		return
@@ -210,16 +258,19 @@ func extractSlugMappings(sessionPath string, slugToAgentType map[string]string) 
 		hasTask := strings.Contains(string(line), `"Task"`)
 		hasSubagent := strings.Contains(string(line), `"subagent_type"`)
 		hasToolResult := strings.Contains(string(line), `"tool_result"`)
+		hasToolUseResult := strings.Contains(string(line), `"toolUseResult"`)
 
-		if !hasTask && !hasSubagent && !hasToolResult {
+		if !hasTask && !hasSubagent && !hasToolResult && !hasToolUseResult {
 			continue
 		}
 
-		// Parse the entry to extract slug field at entry level
+		// Parse entry with toolUseResult field
 		var rawEntry struct {
-			Type    string          `json:"type"`
-			Slug    string          `json:"slug"`
-			Message json.RawMessage `json:"message"`
+			Type          string          `json:"type"`
+			Message       json.RawMessage `json:"message"`
+			ToolUseResult struct {
+				AgentID string `json:"agentId"`
+			} `json:"toolUseResult"`
 		}
 		if err := json.Unmarshal(line, &rawEntry); err != nil {
 			continue
@@ -249,8 +300,8 @@ func extractSlugMappings(sessionPath string, slugToAgentType map[string]string) 
 			}
 		}
 
-		// If this is a user message with tool_result and slug, map slug to agent type
-		if rawEntry.Type == "user" && hasToolResult && rawEntry.Slug != "" {
+		// If user message with tool_result AND toolUseResult.agentId, map agentId to agent type
+		if rawEntry.Type == "user" && hasToolResult && rawEntry.ToolUseResult.AgentID != "" {
 			// Parse to find the tool_use_id this result is for
 			type ToolResultItem struct {
 				Type      string `json:"type"`
@@ -267,7 +318,7 @@ func extractSlugMappings(sessionPath string, slugToAgentType map[string]string) 
 			for _, item := range userMsg.Content {
 				if item.Type == "tool_result" {
 					if agentType, ok := pendingTasks[item.ToolUseID]; ok {
-						slugToAgentType[rawEntry.Slug] = agentType
+						agentIdToAgentType[rawEntry.ToolUseResult.AgentID] = agentType
 						delete(pendingTasks, item.ToolUseID)
 					}
 				}
@@ -277,10 +328,10 @@ func extractSlugMappings(sessionPath string, slugToAgentType map[string]string) 
 }
 
 // parseAgentSession parses an agent-*.jsonl file and extracts tool_uses
-func parseAgentSession(agentPath string) (slug string, perms []types.PermissionStats, lastSeen time.Time) {
+func parseAgentSession(agentPath string) (perms []types.PermissionStats, lastSeen time.Time) {
 	file, err := os.Open(agentPath)
 	if err != nil {
-		return "", nil, time.Time{}
+		return nil, time.Time{}
 	}
 	defer file.Close()
 
@@ -294,19 +345,13 @@ func parseAgentSession(agentPath string) (slug string, perms []types.PermissionS
 	for scanner.Scan() {
 		line := scanner.Bytes()
 
-		// Parse entry to get slug at entry level
-		var entry AgentEntry
-		if err := json.Unmarshal(line, &entry); err != nil {
+		// Quick check for tool_use
+		if !strings.Contains(string(line), `"tool_use"`) {
 			continue
 		}
 
-		// Capture slug if present (should be same across all entries)
-		if entry.Slug != "" && slug == "" {
-			slug = entry.Slug
-		}
-
-		// Quick check for tool_use
-		if !strings.Contains(string(line), `"tool_use"`) {
+		var entry AgentEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
 			continue
 		}
 
@@ -366,5 +411,5 @@ func parseAgentSession(agentPath string) (slug string, perms []types.PermissionS
 		})
 	}
 
-	return slug, perms, lastSeen
+	return perms, lastSeen
 }

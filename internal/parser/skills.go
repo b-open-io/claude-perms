@@ -57,16 +57,22 @@ func loadSkillsFromPlugins() ([]types.SkillPermissions, error) {
 				continue
 			}
 
-			// Use all versions (could filter to latest)
+			// Find the latest version (highest semver string)
+			var latestVersion string
 			for _, version := range versions {
 				if !version.IsDir() {
 					continue
 				}
+				if version.Name() > latestVersion {
+					latestVersion = version.Name()
+				}
+			}
 
-				versionPath := filepath.Join(pluginPath, version.Name())
+			if latestVersion != "" {
+				versionPath := filepath.Join(pluginPath, latestVersion)
 				skillsDir := filepath.Join(versionPath, "skills")
 
-				pluginSkills, err := loadSkillsFromDir(skillsDir, plugin.Name())
+				pluginSkills, err := loadSkillsFromDirWithVersion(skillsDir, plugin.Name(), latestVersion)
 				if err == nil {
 					skills = append(skills, pluginSkills...)
 				}
@@ -77,8 +83,13 @@ func loadSkillsFromPlugins() ([]types.SkillPermissions, error) {
 	return skills, nil
 }
 
-// loadSkillsFromDir loads all skills from a directory
+// loadSkillsFromDir loads all skills from a directory (without version)
 func loadSkillsFromDir(dir, pluginName string) ([]types.SkillPermissions, error) {
+	return loadSkillsFromDirWithVersion(dir, pluginName, "")
+}
+
+// loadSkillsFromDirWithVersion loads all skills from a directory with version info
+func loadSkillsFromDirWithVersion(dir, pluginName, version string) ([]types.SkillPermissions, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -93,7 +104,7 @@ func loadSkillsFromDir(dir, pluginName string) ([]types.SkillPermissions, error)
 
 		// Each skill is in a subdirectory with a SKILL.md file
 		skillPath := filepath.Join(dir, entry.Name(), "SKILL.md")
-		skill, err := parseSkillFile(skillPath, pluginName)
+		skill, err := parseSkillFile(skillPath, pluginName, version)
 		if err != nil {
 			continue
 		}
@@ -107,7 +118,7 @@ func loadSkillsFromDir(dir, pluginName string) ([]types.SkillPermissions, error)
 }
 
 // parseSkillFile parses a skill markdown file and extracts frontmatter
-func parseSkillFile(path, pluginName string) (types.SkillPermissions, error) {
+func parseSkillFile(path, pluginName, version string) (types.SkillPermissions, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return types.SkillPermissions{}, err
@@ -158,7 +169,8 @@ func parseSkillFile(path, pluginName string) (types.SkillPermissions, error) {
 	return types.SkillPermissions{
 		Name:        name,
 		Plugin:      pluginName,
+		Version:     version,
 		FilePath:    path,
-		Permissions: ParsePermissions(frontmatter.AllowedTools),
+		Permissions: ParsePermissions(parseToolsField(frontmatter.Tools)),
 	}, nil
 }

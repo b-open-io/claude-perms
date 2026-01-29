@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"github.com/b-open-io/claude-perms/internal/parser"
+	"github.com/b-open-io/claude-perms/internal/types"
 )
 
 // renderApplyModal renders the apply permission modal
@@ -14,95 +15,116 @@ func (m Model) renderApplyModal() string {
 		return ""
 	}
 
-	// Use 80% of terminal width, max 60, min 40
-	modalWidth := m.width * 80 / 100
-	if modalWidth > 60 {
-		modalWidth = 60
+	modalWidth := m.width * 85 / 100
+	if modalWidth > 80 {
+		modalWidth = 80
 	}
-	if modalWidth < 40 {
-		modalWidth = 40
+	if modalWidth < 50 {
+		modalWidth = 50
 	}
 
-	// Build modal content
 	var content strings.Builder
 
-	// Title
 	title := styles.ModalTitle.Render("Apply Permission")
 	content.WriteString(title)
 	content.WriteString("\n\n")
 
-	// Permission info
-	content.WriteString(fmt.Sprintf("  Permission: %s\n", styles.HelpKey.Render(perm.Permission.Raw)))
-	content.WriteString(fmt.Sprintf("  Requested: %d times across %d project(s)\n",
+	content.WriteString(fmt.Sprintf("  %s\n", styles.HelpKey.Render(perm.Permission.Raw)))
+	content.WriteString(fmt.Sprintf("  %d uses across %d project(s)\n\n",
 		perm.Count, len(perm.Projects)))
-	content.WriteString("\n")
 
-	// Calculate inner width accounting for modal padding (2 on each side) and border
-	innerWidth := modalWidth - 6 // -2 border, -4 padding (2 each side)
+	switch m.applyModalMode {
+	case ApplyModeOptionSelect:
+		content.WriteString(m.renderOptionSelect())
+	case ApplyModeProjectSelect:
+		content.WriteString(m.renderProjectSelect(perm))
+	}
 
-	// User-level box
-	userBox := renderCommandBox(
-		"User-level (all projects)",
-		"Add to ~/.claude/settings.local.json:",
-		perm.Permission.Raw,
-		innerWidth,
-	)
-	content.WriteString(userBox)
-	content.WriteString("\n")
-
-	// Project-level box
-	projectBox := renderCommandBox(
-		"Project-level (current project)",
-		"Add to .claude/settings.local.json:",
-		perm.Permission.Raw,
-		innerWidth,
-	)
-	content.WriteString(projectBox)
-	content.WriteString("\n\n")
-
-	// Instructions
-	instructions := fmt.Sprintf("%s Copy user cmd  %s Copy project cmd  %s Back",
-		styles.HelpKey.Render("[u]"),
-		styles.HelpKey.Render("[p]"),
-		styles.HelpKey.Render("[Esc]"),
-	)
-	content.WriteString(instructions)
-
-	// Wrap in modal border
-	modal := styles.Modal.
-		Width(modalWidth).
-		Render(content.String())
-
-	return modal
+	return styles.Modal.Width(modalWidth).Render(content.String())
 }
 
-// renderCommandBox renders a command box with title and content
-func renderCommandBox(title, description, permission string, width int) string {
-	// Don't set Width on bordered style - truncate content instead (Golden Rule #1)
-	boxStyle := lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(ColorSecondary).
-		Padding(0, 1)
+func (m Model) renderOptionSelect() string {
+	perm := m.selectedPermission()
 
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(ColorSecondary)
+	var b strings.Builder
 
-	// Calculate max text width to prevent wrapping: -2 border, -2 padding
-	maxTextWidth := width - 4
+	options := []string{"Apply to User (all projects)", "Apply to Project..."}
+	for i, opt := range options {
+		if i == m.applyOptionCursor {
+			b.WriteString(styles.ListItemSelected.Render("> " + opt))
+		} else {
+			b.WriteString(styles.ListItem.Render("  " + opt))
+		}
+		b.WriteString("\n")
+	}
 
-	// Truncate content lines
-	titleText := truncateString(title, maxTextWidth)
-	descText := truncateString(description, maxTextWidth)
-	permText := fmt.Sprintf(`"permissions": { "allow": ["%s"] }`, permission)
-	permText = truncateString(permText, maxTextWidth)
+	// Show diff preview for whichever option is highlighted
+	if perm != nil {
+		b.WriteString("\n")
+		if m.applyOptionCursor == 0 {
+			// User level preview
+			filePath, diffLines, allExist := parser.PreviewUserDiff([]string{perm.Permission.Raw})
+			b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		}
+		// Project level shows after project selection, so no preview here
+	}
 
-	var content strings.Builder
-	content.WriteString(titleStyle.Render(titleText))
-	content.WriteString("\n")
-	content.WriteString(descText)
-	content.WriteString("\n")
-	content.WriteString(permText)
+	b.WriteString(fmt.Sprintf("\n%s nav  %s confirm  %s cancel",
+		styles.HelpKey.Render("j/k"),
+		styles.HelpKey.Render("Enter"),
+		styles.HelpKey.Render("Esc")))
 
-	return boxStyle.Render(content.String())
+	return b.String()
+}
+
+func (m Model) renderProjectSelect(perm *types.PermissionStats) string {
+	var b strings.Builder
+	b.WriteString("  Select project:\n\n")
+
+	maxVisible := 6
+	start := 0
+	if m.projectListCursor >= maxVisible {
+		start = m.projectListCursor - maxVisible + 1
+	}
+	end := start + maxVisible
+	if end > len(perm.Projects) {
+		end = len(perm.Projects)
+	}
+
+	for i := start; i < end; i++ {
+		display := shortenPath(perm.Projects[i])
+		if i == m.projectListCursor {
+			b.WriteString(styles.ListItemSelected.Render("> " + display))
+		} else {
+			b.WriteString(styles.ListItem.Render("  " + display))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(perm.Projects) > maxVisible {
+		b.WriteString(fmt.Sprintf("\n  (%d/%d)\n", m.projectListCursor+1, len(perm.Projects)))
+	}
+
+	// Show diff preview for the selected project
+	if m.projectListCursor < len(perm.Projects) {
+		b.WriteString("\n")
+		projectPath := perm.Projects[m.projectListCursor]
+		filePath, diffLines, allExist := parser.PreviewProjectDiff(projectPath, []string{perm.Permission.Raw})
+		b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+	}
+
+	b.WriteString(fmt.Sprintf("\n%s nav  %s apply  %s back",
+		styles.HelpKey.Render("j/k"),
+		styles.HelpKey.Render("Enter"),
+		styles.HelpKey.Render("Esc")))
+
+	return b.String()
+}
+
+func shortenPath(path string) string {
+	parts := strings.Split(path, "/")
+	if len(parts) <= 2 {
+		return path
+	}
+	return ".../" + strings.Join(parts[len(parts)-2:], "/")
 }

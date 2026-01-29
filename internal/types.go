@@ -64,6 +64,7 @@ type Model struct {
 	permissionGroups []types.PermissionGroup
 	groupCursor      int // Which group is selected
 	childCursor      int // Which child within expanded group (-1 if on group)
+	freqScroll       int // Scroll offset for frequency viewport
 
 	// Matrix view state
 	matrixCursor     int  // Cursor position in agent/skill list
@@ -84,4 +85,8 @@ type Model struct {
 
 	// Error state
 	err error
+
+	// Toast notification (shown after apply)
+	toastMessage string // Multi-line message to show
+	toastTicks   int    // Remaining ticks before auto-dismiss
 }

@@ -55,6 +55,7 @@ func (m Model) handleKeyboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case ViewFrequency:
 			m.groupCursor = 0
 			m.childCursor = -1
+			m.freqScroll = 0
 		case ViewMatrix:
 			m.matrixCursor = 0
 			m.matrixScroll = 0
@@ -69,12 +70,19 @@ func (m Model) handleKeyboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.groupCursor = 0
 			}
 			m.childCursor = -1
+			m.updateFreqScroll()
 		case ViewMatrix:
-			maxIdx := len(m.agents) - 1
+			maxIdx := m.matrixListLen() - 1
 			if maxIdx < 0 {
 				maxIdx = 0
 			}
 			m.matrixCursor = maxIdx
+			// Scroll to show cursor
+			_, contentHeight := m.calculateLayout()
+			viewportHeight := contentHeight - 5
+			if m.matrixCursor >= viewportHeight {
+				m.matrixScroll = m.matrixCursor - viewportHeight + 1
+			}
 		}
 		return m, nil
 
@@ -224,7 +232,8 @@ func (m Model) applyToUser() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if err := parser.WritePermissionToUserSettings(perm.Permission.Raw); err != nil {
+	result, err := parser.WritePermissionToUserSettings(perm.Permission.Raw)
+	if err != nil {
 		m.err = err
 		return m, nil
 	}
@@ -232,7 +241,8 @@ func (m Model) applyToUser() (tea.Model, tea.Cmd) {
 	m.userApproved = append(m.userApproved, perm.Permission.Raw)
 	m.showApplyModal = false
 	m.resetApplyModalState()
-	return m, nil
+	m.setApplyToast(result)
+	return m, toastTickCmd()
 }
 
 func (m Model) applyToProject() (tea.Model, tea.Cmd) {
@@ -242,7 +252,8 @@ func (m Model) applyToProject() (tea.Model, tea.Cmd) {
 	}
 
 	projectPath := perm.Projects[m.projectListCursor]
-	if err := parser.WritePermissionToProjectSettings(projectPath, perm.Permission.Raw); err != nil {
+	result, err := parser.WritePermissionToProjectSettings(projectPath, perm.Permission.Raw)
+	if err != nil {
 		m.err = err
 		return m, nil
 	}
@@ -250,7 +261,8 @@ func (m Model) applyToProject() (tea.Model, tea.Cmd) {
 	m.projectApproved = append(m.projectApproved, perm.Permission.Raw)
 	m.showApplyModal = false
 	m.resetApplyModalState()
-	return m, nil
+	m.setApplyToast(result)
+	return m, toastTickCmd()
 }
 
 // generateUserCommand creates the command to add permission at user level
@@ -444,18 +456,31 @@ func (m Model) applySelectedToUser() (tea.Model, tea.Cmd) {
 	}
 	agent := m.agentUsage[m.selectedAgentIdx]
 
+	var lastResult *parser.ApplyResult
+	applied := 0
 	for i, perm := range agent.Permissions {
 		if i < len(m.agentModalSelected) && m.agentModalSelected[i] {
-			if err := parser.WritePermissionToUserSettings(perm.Permission.Raw); err != nil {
+			result, err := parser.WritePermissionToUserSettings(perm.Permission.Raw)
+			if err != nil {
 				m.err = err
 				return m, nil
 			}
 			m.userApproved = append(m.userApproved, perm.Permission.Raw)
+			lastResult = result
+			applied++
 		}
 	}
 
 	m.showAgentModal = false
 	m.resetAgentModalState()
+	if lastResult != nil {
+		if applied == 1 {
+			m.setApplyToast(lastResult)
+		} else {
+			m.setApplyToastBatch(lastResult.FilePath, applied)
+		}
+		return m, toastTickCmd()
+	}
 	return m, nil
 }
 
@@ -470,25 +495,38 @@ func (m Model) applySelectedToProject() (tea.Model, tea.Cmd) {
 	}
 	projectPath := agent.Projects[m.agentModalProjCursor]
 
+	var lastResult *parser.ApplyResult
+	applied := 0
 	for i, perm := range agent.Permissions {
 		if i < len(m.agentModalSelected) && m.agentModalSelected[i] {
-			if err := parser.WritePermissionToProjectSettings(projectPath, perm.Permission.Raw); err != nil {
+			result, err := parser.WritePermissionToProjectSettings(projectPath, perm.Permission.Raw)
+			if err != nil {
 				m.err = err
 				return m, nil
 			}
 			m.projectApproved = append(m.projectApproved, perm.Permission.Raw)
+			lastResult = result
+			applied++
 		}
 	}
 
 	m.showAgentModal = false
 	m.resetAgentModalState()
+	if lastResult != nil {
+		if applied == 1 {
+			m.setApplyToast(lastResult)
+		} else {
+			m.setApplyToastBatch(lastResult.FilePath, applied)
+		}
+		return m, toastTickCmd()
+	}
 	return m, nil
 }
 
 func (m *Model) resetAgentModalState() {
 	m.agentModalCursor = 0
 	m.agentModalSelected = nil
-	m.agentModalMode = 0
+	m.agentModalMode = AgentModalModePermissions
 	m.agentModalScope = 0
 	m.agentModalProjCursor = 0
 }

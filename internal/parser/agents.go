@@ -29,8 +29,13 @@ func LoadAllAgents() ([]types.AgentPermissions, error) {
 	return agents, nil
 }
 
-// loadAgentsFromDir loads all agents from a directory
+// loadAgentsFromDir loads all agents from a directory (without version)
 func loadAgentsFromDir(dir, pluginName string) ([]types.AgentPermissions, error) {
+	return loadAgentsFromDirWithVersion(dir, pluginName, "")
+}
+
+// loadAgentsFromDirWithVersion loads all agents from a directory with version info
+func loadAgentsFromDirWithVersion(dir, pluginName, version string) ([]types.AgentPermissions, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -48,7 +53,7 @@ func loadAgentsFromDir(dir, pluginName string) ([]types.AgentPermissions, error)
 		}
 
 		path := filepath.Join(dir, entry.Name())
-		agent, err := parseAgentFile(path, pluginName)
+		agent, err := parseAgentFile(path, pluginName, version)
 		if err != nil {
 			continue
 		}
@@ -95,16 +100,22 @@ func loadAgentsFromPlugins() ([]types.AgentPermissions, error) {
 				continue
 			}
 
-			// Use the latest version (last in sorted order)
+			// Find the latest version (highest semver string)
+			var latestVersion string
 			for _, version := range versions {
 				if !version.IsDir() {
 					continue
 				}
+				if version.Name() > latestVersion {
+					latestVersion = version.Name()
+				}
+			}
 
-				versionPath := filepath.Join(pluginPath, version.Name())
+			if latestVersion != "" {
+				versionPath := filepath.Join(pluginPath, latestVersion)
 				agentsDir := filepath.Join(versionPath, "agents")
 
-				pluginAgents, err := loadAgentsFromDir(agentsDir, plugin.Name())
+				pluginAgents, err := loadAgentsFromDirWithVersion(agentsDir, plugin.Name(), latestVersion)
 				if err == nil {
 					agents = append(agents, pluginAgents...)
 				}
@@ -116,7 +127,7 @@ func loadAgentsFromPlugins() ([]types.AgentPermissions, error) {
 }
 
 // parseAgentFile parses an agent markdown file and extracts frontmatter
-func parseAgentFile(path, pluginName string) (types.AgentPermissions, error) {
+func parseAgentFile(path, pluginName, version string) (types.AgentPermissions, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return types.AgentPermissions{}, err
@@ -167,7 +178,40 @@ func parseAgentFile(path, pluginName string) (types.AgentPermissions, error) {
 	return types.AgentPermissions{
 		Name:        name,
 		Plugin:      pluginName,
+		Version:     version,
 		FilePath:    path,
-		Permissions: ParsePermissions(frontmatter.AllowedTools),
+		Permissions: ParsePermissions(parseToolsField(frontmatter.Tools)),
 	}, nil
+}
+
+// parseToolsField handles both []string and comma-separated string formats
+func parseToolsField(tools interface{}) []string {
+	if tools == nil {
+		return nil
+	}
+
+	switch v := tools.(type) {
+	case []interface{}:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				result = append(result, strings.TrimSpace(s))
+			}
+		}
+		return result
+	case []string:
+		return v
+	case string:
+		// Comma-separated string
+		parts := strings.Split(v, ",")
+		result := make([]string, 0, len(parts))
+		for _, p := range parts {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+		return result
+	}
+
+	return nil
 }

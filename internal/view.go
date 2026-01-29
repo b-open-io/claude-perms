@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/b-open-io/claude-perms/internal/parser"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -37,8 +38,12 @@ func (m Model) View() string {
 		b.WriteString(m.renderHelpView())
 	}
 
-	// Status bar
-	b.WriteString(m.renderStatusBar())
+	// Status bar (toast overrides when active)
+	if m.toastTicks > 0 && m.toastMessage != "" {
+		b.WriteString(m.renderToast())
+	} else {
+		b.WriteString(m.renderStatusBar())
+	}
 
 	// Modal overlays
 	if m.showApplyModal {
@@ -82,6 +87,79 @@ func (m Model) renderTabBar() string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// renderDiffPreview renders a colored diff preview for the modal
+func renderDiffPreview(filePath string, diffLines []parser.DiffLine, allExist bool, maxWidth int) string {
+	addedStyle := lipgloss.NewStyle().Foreground(ColorSuccess)
+	removedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")) // Red
+	lineNumStyle := lipgloss.NewStyle().Foreground(ColorMuted)
+	pathStyle := lipgloss.NewStyle().Foreground(ColorSecondary).Italic(true)
+
+	var b strings.Builder
+
+	// File path header
+	b.WriteString(pathStyle.Render(filePath))
+	b.WriteString("\n")
+
+	if allExist {
+		b.WriteString(addedStyle.Render("  (already exists, no changes)"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	if len(diffLines) == 0 {
+		return b.String()
+	}
+
+	// Content area inside modal is narrower
+	contentWidth := maxWidth - 6 // account for line number prefix and padding
+
+	for _, dl := range diffLines {
+		var prefix string
+		if dl.Number > 0 {
+			prefix = fmt.Sprintf("%3d ", dl.Number)
+		} else {
+			prefix = "    "
+		}
+
+		text := dl.Text
+		// Truncate long lines
+		maxText := contentWidth - len(prefix) - 2
+		if maxText > 0 && len(text) > maxText {
+			text = text[:maxText-1] + "…"
+		}
+
+		lineNum := lineNumStyle.Render(prefix)
+
+		switch dl.Status {
+		case '+':
+			b.WriteString(lineNum + addedStyle.Render("+ "+text))
+		case '-':
+			b.WriteString(lineNum + removedStyle.Render("- "+text))
+		default:
+			b.WriteString(lineNum + "  " + text)
+		}
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// renderToast renders a success toast notification in place of the status bar
+func (m Model) renderToast() string {
+	toastStyle := lipgloss.NewStyle().
+		Foreground(ColorSuccess).
+		Bold(true).
+		Padding(0, 1)
+
+	msg := "Applied: " + m.toastMessage
+	padding := m.width - len(msg) - 2
+	if padding < 0 {
+		padding = 0
+	}
+
+	return toastStyle.Render(msg + strings.Repeat(" ", padding))
 }
 
 // renderStatusBar renders the bottom status bar

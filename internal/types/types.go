@@ -13,6 +13,8 @@ type Permission struct {
 type PermissionStats struct {
 	Permission Permission
 	Count      int
+	Approved   int // tool_results where is_error != true
+	Denied     int // tool_results where user rejected
 	LastSeen   time.Time
 	Projects   []string // Project paths where this permission was requested
 	ApprovedAt ApprovalLevel
@@ -93,10 +95,12 @@ type SkillFrontmatter struct {
 
 // PermissionGroup represents a permission type with its children
 type PermissionGroup struct {
-	Type       string            // "Bash", "Read", etc.
-	TotalCount int               // Sum of all children counts
-	LastSeen   time.Time         // Most recent across all children
-	Children   []PermissionStats // Individual permissions like Bash(curl:*)
-	Expanded   bool              // UI state: is this group expanded?
-	ApprovedAt ApprovalLevel     // Highest approval level among children
+	Type          string            // "Bash", "Read", etc.
+	TotalCount    int               // Sum of all children counts
+	TotalApproved int               // Sum of all children approved counts
+	TotalDenied   int               // Sum of all children denied counts
+	LastSeen      time.Time         // Most recent across all children
+	Children      []PermissionStats // Individual permissions like Bash(curl:*)
+	Expanded      bool              // UI state: is this group expanded?
+	ApprovedAt    ApprovalLevel     // Highest approval level among children
 }

@@ -119,7 +119,9 @@ func LoadAllPermissionStatsFromWithProgress(projectsDir string, progress chan<- 
 					projectsMap[key] = make(map[string]bool)
 				}
 
-				statsMap[key].Count += p.Count
+					statsMap[key].Count += p.Count
+				statsMap[key].Approved += p.Approved
+				statsMap[key].Denied += p.Denied
 				if p.LastSeen.After(statsMap[key].LastSeen) {
 					statsMap[key].LastSeen = p.LastSeen
 				}
@@ -180,9 +182,13 @@ type AssistantMessage struct {
 
 // ContentItem represents an item in the content array
 type ContentItem struct {
-	Type  string          `json:"type"`
-	Name  string          `json:"name"`  // Tool name for tool_use
-	Input json.RawMessage `json:"input"` // Captures raw input JSON
+	Type      string          `json:"type"`
+	ID        string          `json:"id,omitempty"`         // tool_use ID
+	Name      string          `json:"name"`                 // Tool name for tool_use
+	Input     json.RawMessage `json:"input"`                // Captures raw input JSON
+	ToolUseID string          `json:"tool_use_id,omitempty"` // For tool_result entries
+	IsError   bool            `json:"is_error,omitempty"`    // For tool_result entries
+	Content   json.RawMessage `json:"content,omitempty"`     // For tool_result entries (string or array)
 }
 
 // parseSessionLog parses a JSONL session log and extracts tool_use events
@@ -195,7 +201,12 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 
 	// Map to count permissions in this session
 	counts := make(map[string]int)
+	approved := make(map[string]int)
+	denied := make(map[string]int)
 	lastSeen := make(map[string]time.Time)
+
+	// Map tool_use ID -> permission key for correlating results
+	toolUseIDToKey := make(map[string]string)
 
 	scanner := bufio.NewScanner(file)
 	// Increase buffer size for large lines
@@ -204,19 +215,15 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		lineStr := string(line)
 
-		// Quick check for tool_use before full parse
-		if !strings.Contains(string(line), `"tool_use"`) {
+		// Quick check: skip lines that don't contain tool_use or tool_result
+		if !strings.Contains(lineStr, `"tool_use"`) && !strings.Contains(lineStr, `"tool_result"`) {
 			continue
 		}
 
 		var entry JSONLEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
-		}
-
-		// Only process assistant messages
-		if entry.Type != "assistant" {
 			continue
 		}
 
@@ -226,7 +233,6 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 			continue
 		}
 
-		// Extract tool names from content
 		for _, item := range msg.Content {
 			if item.Type == "tool_use" && item.Name != "" {
 				// Extract full permission with scope from input
@@ -235,6 +241,11 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 				key := PermissionKey(perm)
 
 				counts[key]++
+
+				// Record mapping from tool_use ID to permission key
+				if item.ID != "" {
+					toolUseIDToKey[item.ID] = key
+				}
 
 				// Parse entry timestamp
 				entryTime := sessionTime
@@ -247,6 +258,18 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 				if _, exists := lastSeen[key]; !exists || entryTime.After(lastSeen[key]) {
 					lastSeen[key] = entryTime
 				}
+			} else if item.Type == "tool_result" && item.ToolUseID != "" {
+				key, exists := toolUseIDToKey[item.ToolUseID]
+				if !exists {
+					continue
+				}
+
+				if item.IsError && toolResultContainsRejection(item.Content) {
+					denied[key]++
+				} else if !item.IsError {
+					approved[key]++
+				}
+				// is_error == true but not rejected = command failure, don't count as denied
 			}
 		}
 	}
@@ -258,11 +281,42 @@ func parseSessionLog(path string, sessionTime time.Time) ([]types.PermissionStat
 		stats = append(stats, types.PermissionStats{
 			Permission: perm,
 			Count:      count,
+			Approved:   approved[key],
+			Denied:     denied[key],
 			LastSeen:   lastSeen[key],
 		})
 	}
 
 	return stats, nil
+}
+
+// toolResultContainsRejection checks if a tool_result content indicates user rejection.
+// Content can be a string or an array of objects with "text" fields.
+func toolResultContainsRejection(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+
+	// Try as plain string first
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return strings.Contains(s, "rejected")
+	}
+
+	// Try as array of content items
+	var items []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &items); err == nil {
+		for _, item := range items {
+			if strings.Contains(item.Text, "rejected") {
+				return true
+			}
+		}
+	}
+
+	// Fallback: check raw bytes
+	return strings.Contains(string(raw), "rejected")
 }
 
 // decodeProjectPath converts encoded project path back to readable form

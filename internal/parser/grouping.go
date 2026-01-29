@@ -16,6 +16,8 @@ func GroupPermissions(stats []types.PermissionStats) []types.PermissionGroup {
 
 		if group, exists := groupMap[baseType]; exists {
 			group.TotalCount += stat.Count
+			group.TotalApproved += stat.Approved
+			group.TotalDenied += stat.Denied
 			group.Children = append(group.Children, stat)
 			if stat.LastSeen.After(group.LastSeen) {
 				group.LastSeen = stat.LastSeen
@@ -25,12 +27,14 @@ func GroupPermissions(stats []types.PermissionStats) []types.PermissionGroup {
 			}
 		} else {
 			groupMap[baseType] = &types.PermissionGroup{
-				Type:       baseType,
-				TotalCount: stat.Count,
-				LastSeen:   stat.LastSeen,
-				Children:   []types.PermissionStats{stat},
-				Expanded:   false,
-				ApprovedAt: stat.ApprovedAt,
+				Type:          baseType,
+				TotalCount:    stat.Count,
+				TotalApproved: stat.Approved,
+				TotalDenied:   stat.Denied,
+				LastSeen:      stat.LastSeen,
+				Children:      []types.PermissionStats{stat},
+				Expanded:      false,
+				ApprovedAt:    stat.ApprovedAt,
 			}
 		}
 	}

@@ -84,7 +84,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		log.Printf("Model updated: %d permissions, %d groups loaded", len(m.permissions), len(m.permissionGroups))
 		return m, nil
 
+	case toastTickMsg:
+		if m.toastTicks > 0 {
+			m.toastTicks--
+			if m.toastTicks > 0 {
+				return m, toastTickCmd()
+			}
+			m.toastMessage = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
+		// Any keypress dismisses the toast
+		if m.toastTicks > 0 {
+			m.toastTicks = 0
+			m.toastMessage = ""
+		}
 		return m.handleKeyboard(msg)
 
 	case tea.MouseMsg:
