@@ -68,6 +68,7 @@ type dataLoadedMsg struct {
 	permissionGroups []types.PermissionGroup
 	agents           []types.AgentPermissions
 	skills           []types.SkillPermissions
+	agentUsage       []types.AgentUsageStats
 	userApproved     []string
 	projectApproved  []string
 	err              error
@@ -75,8 +76,8 @@ type dataLoadedMsg struct {
 
 // LoadData loads all permission data from disk with progress updates
 func LoadData(projectPath string, progress chan<- string) dataLoadedMsg {
-	// Load permission stats from session logs with progress
-	permissions, err := parser.LoadAllPermissionStatsWithProgress(progress)
+	// Load permission stats from session logs with caching
+	permissions, err := parser.LoadAllPermissionStatsWithCache(progress)
 	if err != nil {
 		return dataLoadedMsg{err: err}
 	}
@@ -114,11 +115,18 @@ func LoadData(projectPath string, progress chan<- string) dataLoadedMsg {
 	}
 	skills, _ := parser.LoadAllSkills()
 
+	// Load agent usage stats from session logs
+	if progress != nil {
+		progress <- "Loading agent usage stats..."
+	}
+	agentUsage, _ := parser.LoadAgentUsageStats()
+
 	return dataLoadedMsg{
 		permissions:      permissions,
 		permissionGroups: groups,
 		agents:           agents,
 		skills:           skills,
+		agentUsage:       agentUsage,
 		userApproved:     userApproved,
 		projectApproved:  projectApproved,
 		err:              nil,
@@ -137,17 +145,14 @@ func progressReader(ch <-chan string) tea.Cmd {
 }
 
 // calculateLayout returns the available content dimensions
-// Following Golden Rule #1: Always account for borders
 func (m Model) calculateLayout() (contentWidth, contentHeight int) {
 	contentWidth = m.width
 	contentHeight = m.height
 
-	// Subtract UI elements
+	// Subtract fixed UI elements
 	contentHeight -= 1 // title bar
 	contentHeight -= 1 // tab bar
-	contentHeight -= 1 // header row
 	contentHeight -= 1 // status bar
-	contentHeight -= 2 // CRITICAL: panel borders (Golden Rule #1)
 
 	if contentHeight < 1 {
 		contentHeight = 1
@@ -259,6 +264,44 @@ func (m *Model) navigateUp() {
 			m.childCursor--
 		} else {
 			m.childCursor = -1 // Back to group header
+		}
+	}
+}
+
+// resetApplyModalState resets modal to initial state
+func (m *Model) resetApplyModalState() {
+	m.applyModalMode = ApplyModeOptionSelect
+	m.applyOptionCursor = 0
+	m.projectListCursor = 0
+}
+
+// navigateMatrixDown moves cursor down in Matrix view
+func (m *Model) navigateMatrixDown() {
+	maxIdx := len(m.agents) - 1
+	if maxIdx < 0 {
+		return
+	}
+	if m.matrixCursor < maxIdx {
+		m.matrixCursor++
+		// Update scroll to keep cursor visible
+		_, contentHeight := m.calculateLayout()
+		viewportHeight := contentHeight - 4
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		}
+		if m.matrixCursor >= m.matrixScroll+viewportHeight {
+			m.matrixScroll = m.matrixCursor - viewportHeight + 1
+		}
+	}
+}
+
+// navigateMatrixUp moves cursor up in Matrix view
+func (m *Model) navigateMatrixUp() {
+	if m.matrixCursor > 0 {
+		m.matrixCursor--
+		// Update scroll to keep cursor visible
+		if m.matrixCursor < m.matrixScroll {
+			m.matrixScroll = m.matrixCursor
 		}
 	}
 }

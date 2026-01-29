@@ -14,19 +14,36 @@ const (
 	ViewHelp
 )
 
+// ApplyModalMode represents the current mode within the apply modal
+type ApplyModalMode int
+
+const (
+	ApplyModeOptionSelect  ApplyModalMode = iota // User vs Project selection
+	ApplyModeProjectSelect                       // Project dropdown
+)
+
 // Model is the main Bubble Tea model
 type Model struct {
 	// View state
 	activeView     ViewType
 	showApplyModal bool
 	isLoading      bool        // Shows loading indicator during initial data scan
-	loadingStatus  string      // Current item being loaded
+	loadingStatus  string      // Current project path being loaded
+	loadingSession string      // Current session ID being scanned
 	progressChan   chan string // Channel for streaming progress updates
+
+	// Apply modal state
+	applyModalMode    ApplyModalMode
+	applyOptionCursor int // 0=User, 1=Project
+	projectListCursor int // Index in project list
 
 	// Data
 	permissions []types.PermissionStats
 	agents      []types.AgentPermissions
 	skills      []types.SkillPermissions
+
+	// Agent usage stats (from session logs)
+	agentUsage []types.AgentUsageStats
 
 	// Approved permissions from settings
 	userApproved    []string
@@ -43,10 +60,16 @@ type Model struct {
 	// Filtered list
 	filteredIndices []int
 
-	// Hierarchical view
+	// Hierarchical view (Frequency)
 	permissionGroups []types.PermissionGroup
 	groupCursor      int // Which group is selected
 	childCursor      int // Which child within expanded group (-1 if on group)
+
+	// Matrix view state
+	matrixCursor     int  // Cursor position in agent/skill list
+	matrixScroll     int  // Scroll offset for viewport
+	showAgentModal   bool // Show agent detail modal
+	selectedAgentIdx int  // Index of agent for detail modal
 
 	// Dimensions
 	width  int

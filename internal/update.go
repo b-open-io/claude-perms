@@ -3,6 +3,7 @@ package internal
 import (
 	"log"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -52,7 +53,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		)
 
 	case loadingProgressMsg:
-		m.loadingStatus = msg.status
+		// Parse prefix to determine if it's a session or project update
+		if strings.HasPrefix(msg.status, "session:") {
+			m.loadingSession = strings.TrimPrefix(msg.status, "session:")
+		} else {
+			m.loadingStatus = msg.status
+		}
 		log.Printf("Loading: %s", msg.status)
 		if m.isLoading && m.progressChan != nil {
 			return m, progressReader(m.progressChan)
@@ -71,6 +77,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.permissionGroups = msg.permissionGroups
 		m.agents = msg.agents
 		m.skills = msg.skills
+		m.agentUsage = msg.agentUsage
 		m.userApproved = msg.userApproved
 		m.projectApproved = msg.projectApproved
 		m.clampCursor()
