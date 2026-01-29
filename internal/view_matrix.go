@@ -7,6 +7,13 @@ import (
 	"github.com/b-open-io/claude-perms/internal/types"
 )
 
+// Agent modal modes
+const (
+	AgentModalModePermissions = iota
+	AgentModalModeScope
+	AgentModalModeProject
+)
+
 // calculateMatrixColumns returns responsive column widths based on terminal width
 // Returns: nameWidth, declWidth, callsWidth, lastWidth, statusWidth
 func (m Model) calculateMatrixColumns() (nameWidth, declWidth, callsWidth, lastWidth, statusWidth int) {
@@ -280,50 +287,177 @@ func renderSkillRow(skill types.SkillPermissions, width int) string {
 	return truncateString(line, width-2)
 }
 
-// renderAgentDetailModal renders the agent detail modal
+// renderAgentDetailModal renders the agent detail modal with multi-select
 func (m Model) renderAgentDetailModal() string {
-	if m.selectedAgentIdx >= len(m.agents) {
+	if m.selectedAgentIdx >= len(m.agentUsage) {
 		return ""
 	}
 
-	agent := m.agents[m.selectedAgentIdx]
+	agent := m.agentUsage[m.selectedAgentIdx]
 
 	modalWidth := m.width * 80 / 100
 	if modalWidth > 70 {
 		modalWidth = 70
 	}
-	if modalWidth < 40 {
-		modalWidth = 40
+	if modalWidth < 50 {
+		modalWidth = 50
 	}
 
 	var content strings.Builder
 
 	// Header
-	title := agent.Name
-	if agent.Plugin != "" {
-		title = agent.Plugin + ":" + agent.Name
-	}
-	content.WriteString(styles.ModalTitle.Render(title))
-	content.WriteString("\n\n")
+	content.WriteString(styles.ModalTitle.Render(agent.AgentType))
+	content.WriteString("\n")
+	content.WriteString(fmt.Sprintf("  %d total calls across %d sessions\n", agent.TotalCalls, agent.Sessions))
+	content.WriteString("\n")
 
-	// Metadata
-	if agent.Plugin != "" {
-		content.WriteString(fmt.Sprintf("  Plugin: %s\n", agent.Plugin))
+	switch m.agentModalMode {
+	case AgentModalModePermissions:
+		content.WriteString(m.renderPermissionSelectMode(agent))
+	case AgentModalModeScope:
+		content.WriteString(m.renderScopeSelectMode())
+	case AgentModalModeProject:
+		content.WriteString(m.renderProjectSelectMode(agent))
 	}
-	if agent.Version != "" {
-		content.WriteString(fmt.Sprintf("  Version: %s\n", agent.Version))
+
+	return styles.Modal.Width(modalWidth).Render(content.String())
+}
+
+// renderPermissionSelectMode renders the permission multi-select list
+func (m Model) renderPermissionSelectMode(agent types.AgentUsageStats) string {
+	var content strings.Builder
+
+	content.WriteString("  Permissions requested by this agent:\n\n")
+
+	selectedCount := 0
+	for i, perm := range agent.Permissions {
+		isSelected := i < len(m.agentModalSelected) && m.agentModalSelected[i]
+		isCursor := i == m.agentModalCursor
+
+		checkbox := "[ ]"
+		if isSelected {
+			checkbox = "[x]"
+			selectedCount++
+		}
+
+		cursor := "  "
+		if isCursor {
+			cursor = "> "
+		}
+
+		permName := truncateString(perm.Permission.Raw, 30)
+		calls := fmt.Sprintf("%d calls", perm.Count)
+		status := m.getPermissionApprovalStatus(perm.Permission.Raw)
+
+		line := fmt.Sprintf("%s%s %-30s %10s  %s", cursor, checkbox, permName, calls, status)
+
+		if isCursor {
+			content.WriteString(styles.ListItemSelected.Render(line))
+		} else {
+			content.WriteString(line)
+		}
+		content.WriteString("\n")
+	}
+
+	content.WriteString(fmt.Sprintf("\n  %d selected\n\n", selectedCount))
+	content.WriteString(fmt.Sprintf("  %s Toggle  %s Navigate  %s Apply  %s Close",
+		styles.HelpKey.Render("Space"),
+		styles.HelpKey.Render("j/k"),
+		styles.HelpKey.Render("A"),
+		styles.HelpKey.Render("Esc")))
+
+	return content.String()
+}
+
+// renderScopeSelectMode renders the user/project scope selection
+func (m Model) renderScopeSelectMode() string {
+	var content strings.Builder
+
+	selectedCount := 0
+	for _, sel := range m.agentModalSelected {
+		if sel {
+			selectedCount++
+		}
+	}
+
+	content.WriteString(fmt.Sprintf("  Apply %d permissions to:\n\n", selectedCount))
+
+	userCursor := "  "
+	projCursor := "  "
+	if m.agentModalScope == 0 {
+		userCursor = "> "
+	} else {
+		projCursor = "> "
+	}
+
+	userLine := fmt.Sprintf("%sUser level (~/.claude/settings.local.json)", userCursor)
+	projLine := fmt.Sprintf("%sProject level", projCursor)
+
+	if m.agentModalScope == 0 {
+		content.WriteString(styles.ListItemSelected.Render(userLine))
+	} else {
+		content.WriteString(userLine)
 	}
 	content.WriteString("\n")
 
-	// Permissions list
-	content.WriteString("  Declared Permissions:\n")
-	for _, perm := range agent.Permissions {
-		content.WriteString(fmt.Sprintf("    - %s\n", perm.Raw))
+	if m.agentModalScope == 1 {
+		content.WriteString(styles.ListItemSelected.Render(projLine))
+	} else {
+		content.WriteString(projLine)
+	}
+	content.WriteString("\n")
+
+	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",
+		styles.HelpKey.Render("Enter"),
+		styles.HelpKey.Render("j/k"),
+		styles.HelpKey.Render("Esc")))
+
+	return content.String()
+}
+
+// renderProjectSelectMode renders the project selection list
+func (m Model) renderProjectSelectMode(agent types.AgentUsageStats) string {
+	var content strings.Builder
+
+	content.WriteString("  Select project:\n\n")
+
+	for i, proj := range agent.Projects {
+		cursor := "  "
+		if i == m.agentModalProjCursor {
+			cursor = "> "
+		}
+
+		line := fmt.Sprintf("%s%s", cursor, proj)
+
+		if i == m.agentModalProjCursor {
+			content.WriteString(styles.ListItemSelected.Render(line))
+		} else {
+			content.WriteString(line)
+		}
+		content.WriteString("\n")
 	}
 
-	content.WriteString(fmt.Sprintf("\n%s close", styles.HelpKey.Render("Esc")))
+	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",
+		styles.HelpKey.Render("Enter"),
+		styles.HelpKey.Render("j/k"),
+		styles.HelpKey.Render("Esc")))
 
-	return styles.Modal.Width(modalWidth).Render(content.String())
+	return content.String()
+}
+
+// getPermissionApprovalStatus returns approval status string for a permission
+func (m Model) getPermissionApprovalStatus(permRaw string) string {
+	for _, approved := range m.userApproved {
+		if approved == permRaw {
+			return styles.StatusApproved.Render("✓ user")
+		}
+	}
+	for _, approved := range m.projectApproved {
+		if approved == permRaw {
+			return styles.StatusApproved.Render("✓ proj")
+		}
+	}
+	return styles.StatusPending.Render("○")
 }
 
 // renderWithAgentModal overlays the agent detail modal
