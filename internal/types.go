@@ -71,6 +71,13 @@ type Model struct {
 	showAgentModal   bool // Show agent detail modal
 	selectedAgentIdx int  // Index of agent for detail modal
 
+	// Agent detail modal state
+	agentModalCursor    int    // Cursor in permission list
+	agentModalSelected  []bool // Which permissions are selected (toggled)
+	agentModalMode      int    // 0=permission select, 1=scope select, 2=project select
+	agentModalScope     int    // 0=user, 1=project
+	agentModalProjCursor int   // Cursor in project list
+
 	// Dimensions
 	width  int
 	height int
