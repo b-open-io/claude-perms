@@ -90,6 +90,11 @@ func writePermissionToSettings(path, permission string) (*ApplyResult, error) {
 	// Append new permission
 	settings.Permissions.Allow = append(settings.Permissions.Allow, permission)
 
+	// Ensure deny is an empty array, not null (Claude Code rejects null)
+	if settings.Permissions.Deny == nil {
+		settings.Permissions.Deny = []string{}
+	}
+
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return nil, fmt.Errorf("create directory: %w", err)
@@ -169,6 +174,11 @@ func PreviewPermissionDiff(settingsPath string, permissions []string) ([]DiffLin
 			diff = append(diff, DiffLine{Number: i + 1, Text: line, Status: ' '})
 		}
 		return diff, true
+	}
+
+	// Ensure deny is an empty array, not null (Claude Code rejects null)
+	if settings.Permissions.Deny == nil {
+		settings.Permissions.Deny = []string{}
 	}
 
 	// Generate old formatted output
