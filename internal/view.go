@@ -146,6 +146,18 @@ func renderDiffPreview(filePath string, diffLines []parser.DiffLine, allExist bo
 	return b.String()
 }
 
+func renderDiffPreviewError(filePath string, err error) string {
+	pathStyle := lipgloss.NewStyle().Foreground(ColorSecondary).Italic(true)
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+
+	var b strings.Builder
+	b.WriteString(pathStyle.Render(filePath))
+	b.WriteString("\n")
+	b.WriteString(errorStyle.Render(fmt.Sprintf("  preview unavailable: %v", err)))
+	b.WriteString("\n")
+	return b.String()
+}
+
 // renderToast renders a success toast notification in place of the status bar
 func (m Model) renderToast() string {
 	toastStyle := lipgloss.NewStyle().

@@ -19,9 +19,9 @@ const (
 // Uses weight-based sizing so columns scale proportionally to fill the terminal.
 // Returns: nameWidth, declWidth, callsWidth, lastWidth, statusWidth
 func (m Model) calculateMatrixColumns() (nameWidth, declWidth, callsWidth, lastWidth, statusWidth int) {
-	const cursorWidth = 2   // "> " or "  "
-	const columnGaps = 5    // 1 space between each of the 5 columns
-	const contentPad = 4    // Content area padding
+	const cursorWidth = 2 // "> " or "  "
+	const columnGaps = 5  // 1 space between each of the 5 columns
+	const contentPad = 4  // Content area padding
 
 	// Base column widths (minimums)
 	declWidth = 6   // "Decl"
@@ -421,8 +421,12 @@ func (m Model) renderScopeSelectMode() string {
 	// Diff preview for current scope selection
 	if m.agentModalScope == 0 && len(selectedPerms) > 0 {
 		content.WriteString("\n")
-		filePath, diffLines, allExist := parser.PreviewUserDiff(selectedPerms)
-		content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		filePath, diffLines, allExist, err := parser.PreviewUserDiff(selectedPerms)
+		if err != nil {
+			content.WriteString(renderDiffPreviewError(filePath, err))
+		} else {
+			content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		}
 	}
 
 	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",
@@ -467,8 +471,12 @@ func (m Model) renderProjectSelectMode(agent types.AgentUsageStats) string {
 	if m.agentModalProjCursor < len(agent.Projects) && len(selectedPerms) > 0 {
 		content.WriteString("\n")
 		projectPath := agent.Projects[m.agentModalProjCursor]
-		filePath, diffLines, allExist := parser.PreviewProjectDiff(projectPath, selectedPerms)
-		content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		filePath, diffLines, allExist, err := parser.PreviewProjectDiff(projectPath, selectedPerms)
+		if err != nil {
+			content.WriteString(renderDiffPreviewError(filePath, err))
+		} else {
+			content.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		}
 	}
 
 	content.WriteString(fmt.Sprintf("\n  %s Select  %s Navigate  %s Back",

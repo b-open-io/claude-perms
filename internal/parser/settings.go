@@ -6,9 +6,178 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/b-open-io/claude-perms/internal/types"
 )
+
+const (
+	lockAcquireTimeout = 5 * time.Second
+	lockPollInterval   = 50 * time.Millisecond
+	staleLockMaxAge    = 30 * time.Second
+)
+
+type settingsDocument struct {
+	root        map[string]json.RawMessage
+	permissions map[string]json.RawMessage
+	allow       []string
+	deny        []string
+}
+
+func newSettingsDocument() *settingsDocument {
+	return &settingsDocument{
+		root:        make(map[string]json.RawMessage),
+		permissions: make(map[string]json.RawMessage),
+	}
+}
+
+func parseSettingsDocument(data []byte) (*settingsDocument, error) {
+	doc := newSettingsDocument()
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return doc, nil
+	}
+
+	if err := json.Unmarshal(data, &doc.root); err != nil {
+		return nil, fmt.Errorf("parse settings document: %w", err)
+	}
+	if doc.root == nil {
+		doc.root = make(map[string]json.RawMessage)
+	}
+
+	if rawPerms, ok := doc.root["permissions"]; ok && len(rawPerms) > 0 {
+		if err := json.Unmarshal(rawPerms, &doc.permissions); err != nil {
+			return nil, fmt.Errorf("parse permissions object: %w", err)
+		}
+	}
+	if doc.permissions == nil {
+		doc.permissions = make(map[string]json.RawMessage)
+	}
+
+	if rawAllow, ok := doc.permissions["allow"]; ok && len(rawAllow) > 0 {
+		if err := json.Unmarshal(rawAllow, &doc.allow); err != nil {
+			return nil, fmt.Errorf("parse permissions.allow: %w", err)
+		}
+	}
+
+	if rawDeny, ok := doc.permissions["deny"]; ok && len(rawDeny) > 0 {
+		if err := json.Unmarshal(rawDeny, &doc.deny); err != nil {
+			return nil, fmt.Errorf("parse permissions.deny: %w", err)
+		}
+	}
+
+	return doc, nil
+}
+
+func (d *settingsDocument) marshalIndent() ([]byte, error) {
+	if d.root == nil {
+		d.root = make(map[string]json.RawMessage)
+	}
+	if d.permissions == nil {
+		d.permissions = make(map[string]json.RawMessage)
+	}
+	if d.deny == nil {
+		d.deny = []string{}
+	}
+
+	allowJSON, err := json.Marshal(d.allow)
+	if err != nil {
+		return nil, fmt.Errorf("marshal permissions.allow: %w", err)
+	}
+	denyJSON, err := json.Marshal(d.deny)
+	if err != nil {
+		return nil, fmt.Errorf("marshal permissions.deny: %w", err)
+	}
+	d.permissions["allow"] = allowJSON
+	d.permissions["deny"] = denyJSON
+
+	permsJSON, err := json.Marshal(d.permissions)
+	if err != nil {
+		return nil, fmt.Errorf("marshal permissions object: %w", err)
+	}
+	d.root["permissions"] = permsJSON
+
+	return json.MarshalIndent(d.root, "", "  ")
+}
+
+func (d *settingsDocument) hasPermission(permission string) bool {
+	for _, existing := range d.allow {
+		if existing == permission {
+			return true
+		}
+	}
+	return false
+}
+
+func acquireFileLock(lockPath string) (func(), error) {
+	deadline := time.Now().Add(lockAcquireTimeout)
+
+	for {
+		f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+		if err == nil {
+			_, _ = fmt.Fprintf(f, "pid=%d time=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			_ = f.Close()
+			return func() {
+				_ = os.Remove(lockPath)
+			}, nil
+		}
+
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("acquire lock %s: %w", lockPath, err)
+		}
+
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > staleLockMaxAge {
+			_ = os.Remove(lockPath)
+			continue
+		}
+
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("timed out waiting for file lock: %s", lockPath)
+		}
+		time.Sleep(lockPollInterval)
+	}
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	defer cleanup()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	if err := tmpFile.Sync(); err != nil {
+		_ = tmpFile.Close()
+		return fmt.Errorf("sync temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp file: %w", err)
+	}
+
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("chmod temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace target file: %w", err)
+	}
+
+	// Best-effort directory sync to reduce risk of rename loss on crash.
+	if dirFile, err := os.Open(dir); err == nil {
+		_ = dirFile.Sync()
+		_ = dirFile.Close()
+	}
+
+	return nil
+}
 
 // LoadUserSettings loads permissions from ~/.claude/settings.local.json
 func LoadUserSettings() ([]string, error) {
@@ -32,12 +201,11 @@ func loadSettingsPermissions(path string) ([]string, error) {
 		return nil, err
 	}
 
-	var settings types.Settings
-	if err := json.Unmarshal(data, &settings); err != nil {
+	doc, err := parseSettingsDocument(data)
+	if err != nil {
 		return nil, err
 	}
-
-	return settings.Permissions.Allow, nil
+	return doc.allow, nil
 }
 
 // ApplyResult holds details about what was written
@@ -62,51 +230,45 @@ func WritePermissionToProjectSettings(projectPath, permission string) (*ApplyRes
 
 // writePermissionToSettings reads, merges, and writes back settings
 func writePermissionToSettings(path, permission string) (*ApplyResult, error) {
-	var settings types.Settings
+	lockPath := path + ".lock"
+	releaseLock, err := acquireFileLock(lockPath)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseLock()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
-		// File doesn't exist - will create new
-	} else {
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return nil, fmt.Errorf("parse settings: %w", err)
-		}
+		data = nil
+	}
+
+	doc, err := parseSettingsDocument(data)
+	if err != nil {
+		return nil, fmt.Errorf("parse settings: %w", err)
 	}
 
 	// Check if already exists (idempotent)
-	for _, existing := range settings.Permissions.Allow {
-		if existing == permission {
-			return &ApplyResult{
-				FilePath:   path,
-				Permission: permission,
-				WasNew:     false,
-			}, nil
-		}
+	if doc.hasPermission(permission) {
+		return &ApplyResult{
+			FilePath:   path,
+			Permission: permission,
+			WasNew:     false,
+		}, nil
 	}
 
 	// Append new permission
-	settings.Permissions.Allow = append(settings.Permissions.Allow, permission)
-
-	// Ensure deny is an empty array, not null (Claude Code rejects null)
-	if settings.Permissions.Deny == nil {
-		settings.Permissions.Deny = []string{}
-	}
-
-	// Ensure directory exists
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return nil, fmt.Errorf("create directory: %w", err)
-	}
+	doc.allow = append(doc.allow, permission)
 
 	// Write with pretty formatting
-	output, err := json.MarshalIndent(settings, "", "  ")
+	output, err := doc.marshalIndent()
 	if err != nil {
 		return nil, err
 	}
 
-	if err := os.WriteFile(path, output, 0644); err != nil {
+	if err := writeFileAtomic(path, output, 0644); err != nil {
 		return nil, err
 	}
 
@@ -142,17 +304,20 @@ type DiffLine struct {
 
 // PreviewPermissionDiff generates a diff preview for adding permissions to a settings file.
 // Returns the file path, the diff lines, and whether the permissions already exist.
-func PreviewPermissionDiff(settingsPath string, permissions []string) ([]DiffLine, bool) {
-	var settings types.Settings
-
+func PreviewPermissionDiff(settingsPath string, permissions []string) ([]DiffLine, bool, error) {
 	data, err := os.ReadFile(settingsPath)
-	if err == nil {
-		_ = json.Unmarshal(data, &settings)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, false, err
+	}
+
+	doc, err := parseSettingsDocument(data)
+	if err != nil {
+		return nil, false, err
 	}
 
 	// Check which permissions are new
 	existing := make(map[string]bool)
-	for _, e := range settings.Permissions.Allow {
+	for _, e := range doc.allow {
 		existing[e] = true
 	}
 
@@ -166,48 +331,49 @@ func PreviewPermissionDiff(settingsPath string, permissions []string) ([]DiffLin
 	if len(newPerms) == 0 {
 		// All already exist - show current file state
 		if len(data) == 0 {
-			return nil, true
+			return nil, true, nil
 		}
 		oldLines := strings.Split(string(data), "\n")
 		var diff []DiffLine
 		for i, line := range oldLines {
 			diff = append(diff, DiffLine{Number: i + 1, Text: line, Status: ' '})
 		}
-		return diff, true
-	}
-
-	// Ensure deny is an empty array, not null (Claude Code rejects null)
-	if settings.Permissions.Deny == nil {
-		settings.Permissions.Deny = []string{}
+		return diff, true, nil
 	}
 
 	// Generate old formatted output
-	oldOutput, _ := json.MarshalIndent(settings, "", "  ")
+	oldOutput, err := doc.marshalIndent()
+	if err != nil {
+		return nil, false, err
+	}
 	oldLines := strings.Split(string(oldOutput), "\n")
 
 	// Generate new formatted output
 	for _, p := range newPerms {
-		settings.Permissions.Allow = append(settings.Permissions.Allow, p)
+		doc.allow = append(doc.allow, p)
 	}
-	newOutput, _ := json.MarshalIndent(settings, "", "  ")
+	newOutput, err := doc.marshalIndent()
+	if err != nil {
+		return nil, false, err
+	}
 	newLines := strings.Split(string(newOutput), "\n")
 
 	// Build a contextual diff: show a window around the changed lines
-	return buildContextDiff(oldLines, newLines), false
+	return buildContextDiff(oldLines, newLines), false, nil
 }
 
 // PreviewUserDiff previews adding permissions to user settings
-func PreviewUserDiff(permissions []string) (string, []DiffLine, bool) {
+func PreviewUserDiff(permissions []string) (string, []DiffLine, bool, error) {
 	path := filepath.Join(claudeDir(), "settings.local.json")
-	diff, allExist := PreviewPermissionDiff(path, permissions)
-	return path, diff, allExist
+	diff, allExist, err := PreviewPermissionDiff(path, permissions)
+	return path, diff, allExist, err
 }
 
 // PreviewProjectDiff previews adding permissions to a project's settings
-func PreviewProjectDiff(projectPath string, permissions []string) (string, []DiffLine, bool) {
+func PreviewProjectDiff(projectPath string, permissions []string) (string, []DiffLine, bool, error) {
 	path := filepath.Join(projectPath, ".claude", "settings.local.json")
-	diff, allExist := PreviewPermissionDiff(path, permissions)
-	return path, diff, allExist
+	diff, allExist, err := PreviewPermissionDiff(path, permissions)
+	return path, diff, allExist, err
 }
 
 // buildContextDiff compares old and new line slices and produces a unified-style diff

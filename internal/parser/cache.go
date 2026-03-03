@@ -35,8 +35,8 @@ type AgentSessionEntry struct {
 type PermsCache struct {
 	Version       int                          `json:"version"`
 	Sessions      map[string]CacheEntry        `json:"sessions"`      // session path -> permission stats
-	AgentMappings map[string]AgentMappingEntry  `json:"agentMappings"` // session path -> agentId mappings
-	AgentSessions map[string]AgentSessionEntry  `json:"agentSessions"` // agent file path -> parsed stats
+	AgentMappings map[string]AgentMappingEntry `json:"agentMappings"` // session path -> agentId mappings
+	AgentSessions map[string]AgentSessionEntry `json:"agentSessions"` // agent file path -> parsed stats
 }
 
 const cacheVersion = 3
@@ -87,7 +87,7 @@ func saveCache(cache *PermsCache) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath(), data, 0644)
+	return writeFileAtomic(cachePath(), data, 0644)
 }
 
 // fileHash generates a hash from file metadata (mtime + size)
@@ -233,7 +233,11 @@ func loadPermissionStatsWithCache(projectsDir string, progress chan<- string) ([
 		for _, session := range sessions {
 			// Send session ID update (prefix with "session:" for parsing)
 			if progress != nil {
-				progress <- "session:" + session.SessionID[:12] + "..."
+				sessionID := session.SessionID
+				if len(sessionID) > 12 {
+					sessionID = sessionID[:12]
+				}
+				progress <- "session:" + sessionID + "..."
 			}
 
 			sessionPath := filepath.Join(projectPath, session.SessionID+".jsonl")

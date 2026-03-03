@@ -63,8 +63,12 @@ func (m Model) renderOptionSelect() string {
 		b.WriteString("\n")
 		if m.applyOptionCursor == 0 {
 			// User level preview
-			filePath, diffLines, allExist := parser.PreviewUserDiff([]string{perm.Permission.Raw})
-			b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+			filePath, diffLines, allExist, err := parser.PreviewUserDiff([]string{perm.Permission.Raw})
+			if err != nil {
+				b.WriteString(renderDiffPreviewError(filePath, err))
+			} else {
+				b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+			}
 		}
 		// Project level shows after project selection, so no preview here
 	}
@@ -109,8 +113,12 @@ func (m Model) renderProjectSelect(perm *types.PermissionStats) string {
 	if m.projectListCursor < len(perm.Projects) {
 		b.WriteString("\n")
 		projectPath := perm.Projects[m.projectListCursor]
-		filePath, diffLines, allExist := parser.PreviewProjectDiff(projectPath, []string{perm.Permission.Raw})
-		b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		filePath, diffLines, allExist, err := parser.PreviewProjectDiff(projectPath, []string{perm.Permission.Raw})
+		if err != nil {
+			b.WriteString(renderDiffPreviewError(filePath, err))
+		} else {
+			b.WriteString(renderDiffPreview(filePath, diffLines, allExist, 74))
+		}
 	}
 
 	b.WriteString(fmt.Sprintf("\n%s nav  %s apply  %s back",

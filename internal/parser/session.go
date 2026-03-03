@@ -86,7 +86,11 @@ func LoadAllPermissionStatsFromWithProgress(projectsDir string, progress chan<- 
 		for _, session := range sessions {
 			// Send progress update for session
 			if progress != nil {
-				progress <- session.SessionID[:12] + "..." // Show truncated session ID
+				sessionID := session.SessionID
+				if len(sessionID) > 12 {
+					sessionID = sessionID[:12]
+				}
+				progress <- sessionID + "..." // Show truncated session ID
 			}
 
 			sessionPath := filepath.Join(projectPath, session.SessionID+".jsonl")
@@ -119,7 +123,7 @@ func LoadAllPermissionStatsFromWithProgress(projectsDir string, progress chan<- 
 					projectsMap[key] = make(map[string]bool)
 				}
 
-					statsMap[key].Count += p.Count
+				statsMap[key].Count += p.Count
 				statsMap[key].Approved += p.Approved
 				statsMap[key].Denied += p.Denied
 				if p.LastSeen.After(statsMap[key].LastSeen) {
@@ -183,9 +187,9 @@ type AssistantMessage struct {
 // ContentItem represents an item in the content array
 type ContentItem struct {
 	Type      string          `json:"type"`
-	ID        string          `json:"id,omitempty"`         // tool_use ID
-	Name      string          `json:"name"`                 // Tool name for tool_use
-	Input     json.RawMessage `json:"input"`                // Captures raw input JSON
+	ID        string          `json:"id,omitempty"`          // tool_use ID
+	Name      string          `json:"name"`                  // Tool name for tool_use
+	Input     json.RawMessage `json:"input"`                 // Captures raw input JSON
 	ToolUseID string          `json:"tool_use_id,omitempty"` // For tool_result entries
 	IsError   bool            `json:"is_error,omitempty"`    // For tool_result entries
 	Content   json.RawMessage `json:"content,omitempty"`     // For tool_result entries (string or array)
