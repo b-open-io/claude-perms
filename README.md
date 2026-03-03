@@ -4,10 +4,6 @@ A TUI tool for analyzing and managing Claude Code permission usage. Parses sessi
 
 ![demo](docs/demo/demo.gif)
 
-## Distribution
-
-This repo is distributed as a direct GitHub install and is not listed in the Claude marketplace.
-
 ## Install
 
 ```bash
